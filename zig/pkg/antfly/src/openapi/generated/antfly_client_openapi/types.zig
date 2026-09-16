@@ -14699,6 +14699,98 @@ pub const GoogleGeneratorConfig = struct {
     }
 };
 
+pub const GraphAgentQuery = struct {
+    index: []const u8,
+    graph_agent: GraphAgentTraversal,
+};
+
+/// Bounded single-branch graph traversal driven by a generator. The model may select only one of the returned neighbor keys at each step. The instruction source is optional; when omitted the generator receives the current document and neighbor documents as context.
+pub const GraphAgentTraversal = struct {
+    start: GraphNodeSelector,
+    /// User request supplied to every graph-agent decision.
+    query: []const u8,
+    direction: ?EdgeDirection = null,
+    edge_types: ?[]const GraphEdgeType = null,
+    max_steps: ?i64 = null,
+    neighbor_limit: ?i64 = null,
+    /// Optional system instruction for each graph-agent decision.
+    instruction: ?[]const u8 = null,
+    /// Optional JSON field containing the current node's instruction.
+    instruction_field: ?[]const u8 = null,
+    generator: ?GeneratorConfig = null,
+    chain: ?[]const ChainLink = null,
+    /// Include model decisions and selected nodes in the response.
+    include_trace: ?bool = null,
+
+    /// OpenAPI wire names and nullability consumed by compatible typed JSON parsers.
+    pub const openApiFieldMetadata = .{
+        .{ "start", "start", false },
+        .{ "query", "query", false },
+        .{ "direction", "direction", true },
+        .{ "edge_types", "edge_types", true },
+        .{ "max_steps", "max_steps", true },
+        .{ "neighbor_limit", "neighbor_limit", true },
+        .{ "instruction", "instruction", true },
+        .{ "instruction_field", "instruction_field", true },
+        .{ "generator", "generator", true },
+        .{ "chain", "chain", true },
+        .{ "include_trace", "include_trace", true },
+    };
+
+    pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
+        return try openApiParseObject(@This(), openApiFieldMetadata, allocator, source, options);
+    }
+
+    pub fn jsonParseFromValue(allocator: std.mem.Allocator, source: std.json.Value, options: std.json.ParseOptions) !@This() {
+        return try openApiParseObjectFromValue(@This(), openApiFieldMetadata, allocator, source, options);
+    }
+
+    pub fn jsonStringify(self: @This(), jw: anytype) !void {
+        try jw.beginObject();
+        try jw.objectField("start");
+        try jw.write(self.start);
+        try jw.objectField("query");
+        try jw.write(self.query);
+        if (self.direction) |value| {
+            try jw.objectField("direction");
+            try jw.write(value);
+        }
+        if (self.edge_types) |value| {
+            try jw.objectField("edge_types");
+            try jw.write(value);
+        }
+        if (self.max_steps) |value| {
+            try jw.objectField("max_steps");
+            try jw.write(value);
+        }
+        if (self.neighbor_limit) |value| {
+            try jw.objectField("neighbor_limit");
+            try jw.write(value);
+        }
+        if (self.instruction) |value| {
+            try jw.objectField("instruction");
+            try jw.write(value);
+        }
+        if (self.instruction_field) |value| {
+            try jw.objectField("instruction_field");
+            try jw.write(value);
+        }
+        if (self.generator) |value| {
+            try jw.objectField("generator");
+            try jw.write(value);
+        }
+        if (self.chain) |value| {
+            try jw.objectField("chain");
+            try jw.write(value);
+        }
+        if (self.include_trace) |value| {
+            try jw.objectField("include_trace");
+            try jw.write(value);
+        }
+        try jw.endObject();
+    }
+};
+
 pub const GraphAggregateValue = struct {
     /// Decimal string so counts remain lossless in JavaScript.
     value: []const u8,
@@ -17802,6 +17894,7 @@ pub const GraphQueries = std.json.ArrayHashMap(GraphQuery);
 
 pub const GraphQuery = union(enum) {
     graph_match_query: *GraphMatchQuery,
+    graph_agent_query: *GraphAgentQuery,
     graph_k_shortest_paths_query: *GraphKShortestPathsQuery,
     graph_shortest_path_query: *GraphShortestPathQuery,
     graph_traverse_query: *GraphTraverseQuery,
@@ -17839,6 +17932,12 @@ pub const GraphQuery = union(enum) {
         }
         if (objectHasAnyKey(source.object, &.{
             "index",
+            "graph_agent",
+        })) {
+            if (try parseStructuralVariant(GraphAgentQuery, allocator, source, options)) |parsed| return .{ .graph_agent_query = parsed };
+        }
+        if (objectHasAnyKey(source.object, &.{
+            "index",
             "k_shortest_paths",
         })) {
             if (try parseStructuralVariant(GraphKShortestPathsQuery, allocator, source, options)) |parsed| return .{ .graph_k_shortest_paths_query = parsed };
@@ -17861,6 +17960,7 @@ pub const GraphQuery = union(enum) {
     pub fn jsonStringify(self: @This(), jw: anytype) !void {
         switch (self) {
             .graph_match_query => |v| try jw.write(v.*),
+            .graph_agent_query => |v| try jw.write(v.*),
             .graph_k_shortest_paths_query => |v| try jw.write(v.*),
             .graph_shortest_path_query => |v| try jw.write(v.*),
             .graph_traverse_query => |v| try jw.write(v.*),
@@ -18643,6 +18743,7 @@ pub const GraphTraversal = struct {
 
     /// OpenAPI wire names and nullability consumed by compatible typed JSON parsers.
     pub const openApiFieldMetadata = .{
+        .{ "query", "query", true },
         .{ "start", "start", false },
         .{ "direction", "direction", true },
         .{ "edge_types", "edge_types", true },
@@ -18670,6 +18771,10 @@ pub const GraphTraversal = struct {
 
     pub fn jsonStringify(self: @This(), jw: anytype) !void {
         try jw.beginObject();
+        if (self.query) |value| {
+            try jw.objectField("query");
+            try jw.write(value);
+        }
         try jw.objectField("start");
         try jw.write(self.start);
         if (self.direction) |value| {

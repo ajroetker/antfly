@@ -1559,6 +1559,9 @@ fn metadataValidateGraphSearchesAgainstContext(
             .graph_k_shortest_paths_query => |path_query| if (path_query.k_shortest_paths.edge_types) |types| {
                 if (try metadataValidateGraphEdgeTypesForIndex(alloc, context, entry.key_ptr.*, index, types)) |feedback| return feedback;
             },
+            .graph_agent_query => |agent_query| if (agent_query.graph_agent.edge_types) |types| {
+                if (try metadataValidateGraphEdgeTypesForIndex(alloc, context, entry.key_ptr.*, index, types)) |feedback| return feedback;
+            },
         }
     }
     if (try metadataPreflightGraphSearchesAgainstExecutorParser(alloc, graph_queries)) |feedback| return feedback;
@@ -3972,6 +3975,12 @@ fn validateGeneratedQueryBuilderGraphQuery(
             }
         },
         .graph_traverse_query => |traverse_query| try validateGeneratedGraphNodeSelector(traverse_query.traverse.start),
+        .graph_agent_query => |agent_query| {
+            try validateGeneratedGraphNodeSelector(agent_query.graph_agent.start);
+            if (agent_query.graph_agent.max_steps) |max_steps| if (max_steps <= 0 or max_steps > 64) return error.InvalidQueryBuilderGeneration;
+            if (agent_query.graph_agent.neighbor_limit) |neighbor_limit| if (neighbor_limit <= 0 or neighbor_limit > 256) return error.InvalidQueryBuilderGeneration;
+            if (agent_query.graph_agent.generator == null and agent_query.graph_agent.chain == null) return error.InvalidQueryBuilderGeneration;
+        },
         .graph_shortest_path_query => |path_query| if (path_query.shortest_path.from.key.len == 0 or path_query.shortest_path.to.key.len == 0) return error.InvalidQueryBuilderGeneration,
         .graph_k_shortest_paths_query => |path_query| if (path_query.k_shortest_paths.from.key.len == 0 or path_query.k_shortest_paths.to.key.len == 0 or path_query.k_shortest_paths.k <= 0) return error.InvalidQueryBuilderGeneration,
     }
@@ -4039,12 +4048,14 @@ fn generatedGraphQueryIndex(query: indexes_openapi.GraphQuery) []const u8 {
         .graph_traverse_query => |value| value.index,
         .graph_shortest_path_query => |value| value.index,
         .graph_k_shortest_paths_query => |value| value.index,
+        .graph_agent_query => |value| value.index,
     };
 }
 
 fn generatedGraphQueryStartSelector(query: indexes_openapi.GraphQuery) ?indexes_openapi.GraphNodeSelector {
     return switch (query) {
         .graph_traverse_query => |value| value.traverse.start,
+        .graph_agent_query => |value| value.graph_agent.start,
         else => null,
     };
 }

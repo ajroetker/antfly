@@ -3861,6 +3861,59 @@ components:
         filter:
           $ref: '#/components/schemas/GraphDocumentFilter'
           description: Non-scoring structured stored-document predicate for reached nodes.
+    GraphAgentTraversal:
+      type: object
+      additionalProperties: false
+      required: [start, query]
+      description: >-
+        Bounded single-branch graph traversal driven by a generator. The model
+        may select only one of the returned neighbor keys at each step. The
+        instruction source is optional; when omitted the generator receives the
+        current document and neighbor documents as context.
+      properties:
+        start:
+          $ref: '#/components/schemas/GraphNodeSelector'
+        query:
+          type: string
+          minLength: 1
+          description: User request supplied to every graph-agent decision.
+        direction:
+          $ref: '#/components/schemas/EdgeDirection'
+        edge_types:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items: { $ref: '#/components/schemas/GraphEdgeType' }
+        max_steps:
+          type: integer
+          minimum: 1
+          maximum: 64
+          default: 8
+        neighbor_limit:
+          type: integer
+          minimum: 1
+          maximum: 256
+          default: 8
+        instruction:
+          type: string
+          minLength: 1
+          description: Optional system instruction for each graph-agent decision.
+        instruction_field:
+          type: string
+          minLength: 1
+          description: Optional JSON field containing the current node's instruction.
+        generator:
+          $ref: '../shared/generating.yaml#/components/schemas/GeneratorConfig'
+        chain:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items:
+            $ref: '../shared/generating.yaml#/components/schemas/ChainLink'
+        include_trace:
+          type: boolean
+          default: true
+          description: Include model decisions and selected nodes in the response.
     GraphPathEndpoint:
       type: object
       additionalProperties: false
@@ -4288,6 +4341,13 @@ components:
       properties:
         index: { type: string, minLength: 1, pattern: '.*\S.*' }
         traverse: { $ref: '#/components/schemas/GraphTraversal' }
+    GraphAgentQuery:
+      type: object
+      additionalProperties: false
+      required: [index, graph_agent]
+      properties:
+        index: { type: string, minLength: 1, pattern: '.*\S.*' }
+        graph_agent: { $ref: '#/components/schemas/GraphAgentTraversal' }
     GraphShortestPathQuery:
       type: object
       additionalProperties: false
@@ -4306,6 +4366,7 @@ components:
       oneOf:
         - $ref: '#/components/schemas/GraphMatchQuery'
         - $ref: '#/components/schemas/GraphTraverseQuery'
+        - $ref: '#/components/schemas/GraphAgentQuery'
         - $ref: '#/components/schemas/GraphShortestPathQuery'
         - $ref: '#/components/schemas/GraphKShortestPathsQuery'
     GraphQueries:

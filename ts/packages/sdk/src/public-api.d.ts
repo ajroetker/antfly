@@ -14129,6 +14129,31 @@ export interface components {
             index: string;
             traverse: components["schemas"]["GraphTraversal"];
         };
+        /** @description Bounded single-branch graph traversal driven by a generator. The model may select only one of the returned neighbor keys at each step. The instruction source is optional; when omitted the generator receives the current document and neighbor documents as context. */
+        GraphAgentTraversal: {
+            start: components["schemas"]["GraphNodeSelector"];
+            direction?: components["schemas"]["EdgeDirection"];
+            edge_types?: components["schemas"]["GraphEdgeType"][];
+            /** @default 8 */
+            max_steps?: number;
+            /** @default 8 */
+            neighbor_limit?: number;
+            /** @description Optional system instruction for each graph-agent decision. */
+            instruction?: string;
+            /** @description Optional JSON field containing the current node's instruction. */
+            instruction_field?: string;
+            generator?: components["schemas"]["GeneratorConfig"];
+            chain?: components["schemas"]["ChainLink"][];
+            /**
+             * @description Include model decisions and selected nodes in the response.
+             * @default true
+             */
+            include_trace?: boolean;
+        };
+        GraphAgentQuery: {
+            index: string;
+            graph_agent: components["schemas"]["GraphAgentTraversal"];
+        };
         /** @description Find the best path from `from` to `to` in the requested stored-edge direction. */
         GraphShortestPath: {
             from: components["schemas"]["GraphPathEndpoint"];
@@ -14184,7 +14209,7 @@ export interface components {
             index: string;
             k_shortest_paths: components["schemas"]["GraphKShortestPaths"];
         };
-        GraphQuery: components["schemas"]["GraphMatchQuery"] | components["schemas"]["GraphTraverseQuery"] | components["schemas"]["GraphShortestPathQuery"] | components["schemas"]["GraphKShortestPathsQuery"];
+        GraphQuery: components["schemas"]["GraphMatchQuery"] | components["schemas"]["GraphTraverseQuery"] | components["schemas"]["GraphAgentQuery"] | components["schemas"]["GraphShortestPathQuery"] | components["schemas"]["GraphKShortestPathsQuery"];
         /** @description Named canonical graph operations. When graph_queries is present it must contain at least one operation. A request may contain at most 64 operations, of which at most eight may be MATCH operations. Keys use the versioned GraphIdentifier policy. */
         GraphQueries: {
             [key: string]: components["schemas"]["GraphQuery"];

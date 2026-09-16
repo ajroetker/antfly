@@ -97,8 +97,10 @@ const query_contract = @import("query_contract.zig");
 const public_search_request = @import("public_search_request.zig");
 const public_limits = @import("public_limits.zig");
 const query_builder_agent = @import("query_builder_agent.zig");
+const graph_agent = @import("graph_agent.zig");
 const request_admission_policy = @import("request_admission_policy.zig");
 const retrieval_agent = @import("retrieval_agent.zig");
+const indexes_openapi = @import("antfly_indexes_openapi");
 const distributed_graph = @import("distributed_graph.zig");
 const distributed_join = @import("distributed_join.zig");
 const distributed_txn = @import("distributed_txn.zig");
@@ -11997,6 +11999,124 @@ pub const ApiHttpServer = struct {
         return hits;
     }
 
+    fn executePublicGraphAgentQuery(
+        self: *ApiHttpServer,
+        alloc: std.mem.Allocator,
+        source: table_reads.TableReadSource,
+        table_name: []const u8,
+        body: []const u8,
+        row_filter_json: ?[]const u8,
+        authenticated_identity: ?AuthenticatedIdentity,
+        request_deadline_ns: ?u64,
+        query_embedding_security_scope: QueryEmbeddingSecurityScope,
+        cancellation: ?CancellationToken,
+    ) !?query_api.QueryResponse {
+        _ = row_filter_json;
+        _ = query_embedding_security_scope;
+        const parsed = parsePublicTableQueryBody(alloc, body) catch return null;
+        defer parsed.deinit();
+        const graph_queries = parsed.value.graph_queries orelse return null;
+        var agent_query: ?*indexes_openapi.GraphAgentQuery = null;
+        var agent_name: []const u8 = "agent";
+        var iterator = graph_queries.map.iterator();
+        while (iterator.next()) |entry| switch (entry.value_ptr.*) {
+            .graph_agent_query => |value| {
+                if (agent_query != null) return error.InvalidQueryRequest;
+                agent_query = value;
+                agent_name = entry.key_ptr.*;
+            },
+            else => return null,
+        };
+        const request = agent_query orelse return null;
+        if (authenticated_identity) |identity| {
+            if (!permissionsAllow(identity.permissions, .table, table_name, .read)) return error.Forbidden;
+        }
+
+        const AgentRunner = struct {
+            server: *ApiHttpServer,
+            source: table_reads.TableReadSource,
+            table_name: []const u8,
+            index_name: []const u8,
+            deadline_ns: ?u64,
+            cancellation: ?CancellationToken,
+
+            fn load(ptr: *anyopaque, a: std.mem.Allocator, key: []const u8) !graph_agent.Node {
+                const runner: *@This() = @ptrCast(@alignCast(ptr));
+                const result = (try runner.source.lookup(a, runner.table_name, key, .{}, .read_index)) orelse return error.NotFound;
+                return .{ .key = try a.dupe(u8, key), .document_json = result.json };
+            }
+
+            fn neighbors(ptr: *anyopaque, a: std.mem.Allocator, key: []const u8, limit: u32) ![]graph_agent.Node {
+                const runner: *@This() = @ptrCast(@alignCast(ptr));
+                var keys = std.json.Array.init(a);
+                try keys.append(.{ .string = try a.dupe(u8, key) });
+                var start = std.json.ObjectMap.empty;
+                try start.put(a, "keys", .{ .array = keys });
+                var traverse = std.json.ObjectMap.empty;
+                try traverse.put(a, "start", .{ .object = start });
+                try traverse.put(a, "max_depth", .{ .integer = 1 });
+                try traverse.put(a, "limit", .{ .integer = limit });
+                try traverse.put(a, "include_documents", .{ .bool = true });
+                var operation = std.json.ObjectMap.empty;
+                try operation.put(a, "index", .{ .string = runner.index_name });
+                try operation.put(a, "traverse", .{ .object = traverse });
+                var graph = std.json.ObjectMap.empty;
+                try graph.put(a, "neighbors", .{ .object = operation });
+                var root = std.json.ObjectMap.empty;
+                try root.put(a, "graph_queries", .{ .object = graph });
+                const query_body = try ApiHttpServer.stringifyJsonValueAlloc(a, .{ .object = root });
+                defer a.free(query_body);
+                var semantic_resolver = runner.server.semanticStatusResolver(.internal, "");
+                semantic_resolver.query_embedding_deadline_ns = runner.deadline_ns;
+                semantic_resolver.query_cancellation = runner.cancellation;
+                var parsed_query = try query_api.parsePublicQueryRequest(a, semantic_resolver.iface(), runner.table_name, query_body);
+                defer parsed_query.deinit(a);
+                parsed_query.req.execution_deadline_ns = runner.deadline_ns;
+                parsed_query.req.cancellation = runner.cancellation;
+                var response = (try runner.source.query(a, runner.table_name, parsed_query.req, .read_index)) orelse return error.NotFound;
+                defer response.deinit(a);
+                var decoded = try ant_json.parseFromSlice(metadata_openapi.QueryResponses, a, response.json, .{});
+                defer decoded.deinit();
+                const responses = decoded.value.responses orelse return try a.alloc(graph_agent.Node, 0);
+                if (responses.len == 0 or responses[0].graph_results == null) return try a.alloc(graph_agent.Node, 0);
+                const value = responses[0].graph_results.?.map.get("neighbors") orelse return try a.alloc(graph_agent.Node, 0);
+                const nodes = switch (value) {
+                    .graph_nodes_result => |nodes_result| nodes_result.nodes,
+                    else => return error.InvalidQueryRequest,
+                };
+                var out = try a.alloc(graph_agent.Node, nodes.len);
+                var initialized: usize = 0;
+                errdefer for (out[0..initialized]) |*node| node.deinit(a);
+                for (nodes, out) |node, *destination| {
+                    const document_json = if (node.document) |document|
+                        try ApiHttpServer.stringifyJsonValueAlloc(a, .{ .object = document })
+                    else
+                        try a.dupe(u8, "{}");
+                    destination.* = .{ .key = try a.dupe(u8, node.key), .document_json = document_json };
+                    initialized += 1;
+                }
+                return out;
+            }
+
+            fn generate(ptr: *anyopaque, a: std.mem.Allocator, chain: []const generating_runtime.ChainLink, messages: []const generating_runtime.ChatMessage) !generating_runtime.GenerateResult {
+                const runner: *@This() = @ptrCast(@alignCast(ptr));
+                var client = httpx.Client.initWithConfig(a, runner.server.inferenceIo(), .{ .keep_alive = false });
+                defer client.deinit();
+                return generating_runtime.executeChainWithOptions(a, &client, chain, .{ .antfly_provider = runner.server.antfly_provider, .secret_store = runner.server.cfg.secret_store, .inference_api_key = runner.server.cfg.inference_api_key, .request_context = .{ .io = runner.server.inferenceIo(), .deadline_ns = runner.deadline_ns } }, messages);
+            }
+        };
+
+        var runner = AgentRunner{ .server = self, .source = source, .table_name = table_name, .index_name = request.index, .deadline_ns = request_deadline_ns, .cancellation = cancellation };
+        const chains = try graph_agent.chainsFromOpenApi(alloc, request.graph_agent);
+        defer graph_agent.freeChains(alloc, chains);
+        const start_key = try graph_agent.startKeyFromOpenApi(request.graph_agent, alloc);
+        defer alloc.free(start_key);
+        var result = try graph_agent.runWithChain(alloc, .{ .user_query = request.graph_agent.query, .instruction = request.graph_agent.instruction orelse "Choose the next graph node or finish the task.", .max_steps = @intCast(request.graph_agent.max_steps orelse graph_agent.default_max_steps), .neighbor_limit = @intCast(request.graph_agent.neighbor_limit orelse graph_agent.default_neighbor_limit) }, start_key, chains, .{ .ptr = &runner, .vtable = &.{ .load_node = AgentRunner.load, .list_neighbors = AgentRunner.neighbors, .generate = AgentRunner.generate } });
+        defer result.deinit(alloc);
+        const agent_json = try result.jsonAlloc(alloc, request.graph_agent.include_trace orelse true);
+        return .{ .json = agent_json };
+    }
+
     fn executePlainPublicTableQuery(
         self: *ApiHttpServer,
         alloc: std.mem.Allocator,
@@ -12010,6 +12130,17 @@ pub const ApiHttpServer = struct {
         cancellation: ?CancellationToken,
     ) !query_api.QueryResponse {
         try ensureRequestActive(cancellation);
+        if (try self.executePublicGraphAgentQuery(
+            alloc,
+            source,
+            table_name,
+            body,
+            row_filter_json,
+            authenticated_identity,
+            request_deadline_ns,
+            query_embedding_security_scope,
+            cancellation,
+        )) |response| return response;
         var semantic_resolver = self.semanticStatusResolver(query_embedding_security_scope.domain, query_embedding_security_scope.value);
         semantic_resolver.query_embedding_deadline_ns = request_deadline_ns;
         semantic_resolver.query_cancellation = cancellation;
