@@ -1,7 +1,7 @@
 import type {
-  RetrievalNavigationConfig,
   QueryRequest,
   RetrievalAgentRequest,
+  RetrievalNavigationConfig,
 } from "../src/index.js";
 
 const navigation: RetrievalNavigationConfig = {

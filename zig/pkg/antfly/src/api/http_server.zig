@@ -32309,7 +32309,7 @@ test "api http server serves retrieval agent response envelope" {
         .content_type = "application/json",
         .headers = &filtered_headers,
         .body =
-        \\{"query":"find roots","stream":true,"queries":[{"table":"docs","tree_search":{"index":"doc_hierarchy","start_nodes":"$roots","max_depth":2},"limit":5}]}
+        \\{"query":"find roots","stream":true,"queries":[{"table":"docs","limit":5}],"steps":{"retrieval":{"navigation":{"query_index":0,"strategy":"tree","selection":"ranked","index":"doc_hierarchy","start_nodes":"$roots","max_depth":2}}}}
         ,
     });
     defer filtered_roots.deinit(std.testing.allocator);
