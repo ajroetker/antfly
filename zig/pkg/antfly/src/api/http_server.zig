@@ -11999,6 +11999,50 @@ pub const ApiHttpServer = struct {
         return hits;
     }
 
+    fn resolveGraphAgentSearchStartKey(
+        self: *ApiHttpServer,
+        alloc: std.mem.Allocator,
+        source: table_reads.TableReadSource,
+        table_name: []const u8,
+        body: []const u8,
+        query: []const u8,
+        request_deadline_ns: ?u64,
+        cancellation: ?CancellationToken,
+    ) ![]const u8 {
+        var parsed_body = try std.json.parseFromSlice(std.json.Value, alloc, body, .{});
+        defer parsed_body.deinit();
+        if (parsed_body.value != .object) return error.InvalidQueryRequest;
+        const root = &parsed_body.value.object;
+        _ = root.swapRemove("graph_queries");
+
+        if (!root.contains("query") and !root.contains("full_text_search") and !root.contains("semantic_search")) {
+            var full_text = std.json.ObjectMap.empty;
+            try full_text.put(alloc, "query", .{ .string = try alloc.dupe(u8, query) });
+            try root.put(alloc, "full_text_search", .{ .object = full_text });
+        }
+        try root.put(alloc, "limit", .{ .integer = 1 });
+
+        const search_body = try ApiHttpServer.stringifyJsonValueAlloc(alloc, parsed_body.value);
+        defer alloc.free(search_body);
+        var semantic_resolver = self.semanticStatusResolver(.internal, "");
+        semantic_resolver.query_embedding_deadline_ns = request_deadline_ns;
+        semantic_resolver.query_cancellation = cancellation;
+        var parsed_query = try query_api.parsePublicQueryRequest(alloc, semantic_resolver.iface(), table_name, search_body);
+        defer parsed_query.deinit(alloc);
+        parsed_query.req.execution_deadline_ns = request_deadline_ns;
+        parsed_query.req.cancellation = cancellation;
+        var response = (try source.query(alloc, table_name, parsed_query.req, .read_index)) orelse return error.NotFound;
+        defer response.deinit(alloc);
+        var decoded = try ant_json.parseFromSlice(metadata_openapi.QueryResponses, alloc, response.json, .{});
+        defer decoded.deinit();
+        const responses = decoded.value.responses orelse return error.GraphAgentSearchNoResults;
+        if (responses.len == 0) return error.GraphAgentSearchNoResults;
+        const hits = responses[0].hits orelse return error.GraphAgentSearchNoResults;
+        const hit_list = hits.hits orelse return error.GraphAgentSearchNoResults;
+        if (hit_list.len == 0) return error.GraphAgentSearchNoResults;
+        return try alloc.dupe(u8, hit_list[0]._id);
+    }
+
     fn executePublicGraphAgentQuery(
         self: *ApiHttpServer,
         alloc: std.mem.Allocator,
@@ -12089,7 +12133,7 @@ pub const ApiHttpServer = struct {
                 errdefer for (out[0..initialized]) |*node| node.deinit(a);
                 for (nodes, out) |node, *destination| {
                     const document_json = if (node.document) |document|
-                        try ApiHttpServer.stringifyJsonValueAlloc(a, .{ .object = document })
+                        try std.json.Stringify.valueAlloc(a, document, .{})
                     else
                         try a.dupe(u8, "{}");
                     destination.* = .{ .key = try a.dupe(u8, node.key), .document_json = document_json };
@@ -12109,7 +12153,10 @@ pub const ApiHttpServer = struct {
         var runner = AgentRunner{ .server = self, .source = source, .table_name = table_name, .index_name = request.index, .deadline_ns = request_deadline_ns, .cancellation = cancellation };
         const chains = try graph_agent.chainsFromOpenApi(alloc, request.graph_agent);
         defer graph_agent.freeChains(alloc, chains);
-        const start_key = try graph_agent.startKeyFromOpenApi(request.graph_agent, alloc);
+        const start_key = if (graph_agent.startsFromQueryResults(request.graph_agent))
+            try self.resolveGraphAgentSearchStartKey(alloc, source, table_name, body, request.graph_agent.query, request_deadline_ns, cancellation)
+        else
+            try graph_agent.startKeyFromOpenApi(request.graph_agent, alloc);
         defer alloc.free(start_key);
         var result = try graph_agent.runWithChain(alloc, .{ .user_query = request.graph_agent.query, .instruction = request.graph_agent.instruction orelse "Choose the next graph node or finish the task.", .max_steps = @intCast(request.graph_agent.max_steps orelse graph_agent.default_max_steps), .neighbor_limit = @intCast(request.graph_agent.neighbor_limit orelse graph_agent.default_neighbor_limit) }, start_key, chains, .{ .ptr = &runner, .vtable = &.{ .load_node = AgentRunner.load, .list_neighbors = AgentRunner.neighbors, .generate = AgentRunner.generate } });
         defer result.deinit(alloc);

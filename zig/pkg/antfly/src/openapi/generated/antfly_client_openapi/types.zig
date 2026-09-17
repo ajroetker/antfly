@@ -18743,7 +18743,6 @@ pub const GraphTraversal = struct {
 
     /// OpenAPI wire names and nullability consumed by compatible typed JSON parsers.
     pub const openApiFieldMetadata = .{
-        .{ "query", "query", true },
         .{ "start", "start", false },
         .{ "direction", "direction", true },
         .{ "edge_types", "edge_types", true },
@@ -18771,10 +18770,6 @@ pub const GraphTraversal = struct {
 
     pub fn jsonStringify(self: @This(), jw: anytype) !void {
         try jw.beginObject();
-        if (self.query) |value| {
-            try jw.objectField("query");
-            try jw.write(value);
-        }
         try jw.objectField("start");
         try jw.write(self.start);
         if (self.direction) |value| {

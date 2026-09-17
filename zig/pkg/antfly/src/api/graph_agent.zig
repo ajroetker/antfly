@@ -118,6 +118,13 @@ pub fn startKeyFromOpenApi(config: anytype, alloc: std.mem.Allocator) ![]const u
     };
 }
 
+pub fn startsFromQueryResults(config: anytype) bool {
+    return switch (config.start) {
+        .graph_result_ref_node_selector => |selector| std.mem.eql(u8, selector.result_ref, "$query_results"),
+        else => false,
+    };
+}
+
 /// Convert a public graph-agent request into the runtime configuration used by
 /// the bounded executor.
 pub fn runOpenApi(alloc: std.mem.Allocator, config: anytype, runner: Runner) !Result {
