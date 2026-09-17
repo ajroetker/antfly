@@ -2231,7 +2231,9 @@ fn navigationToolSchema(arena: std.mem.Allocator, executable: []const bool, quer
 }
 
 fn navigationReadScope(query: RetrievalQueryRequest) RetrievalQueryRequest {
-    return .{ .table = query.table, .fields = query.fields, .filter_prefix = query.filter_prefix, .full_text_index = query.full_text_index };
+    // Named text indexes belong only to the seed search. Graph and ID reads
+    // carry predicates and projection, but no scoring text clause.
+    return .{ .table = query.table, .fields = query.fields, .filter_prefix = query.filter_prefix };
 }
 
 fn executeNavigationRead(
@@ -2253,7 +2255,7 @@ fn executeNavigationRead(
     var current_query = if (key != null) navigationReadScope(scope) else scope;
     current_query.graph_navigation = null;
     current_query.limit = 1;
-    if (key) |value| current_query.query = (try std.json.parseFromSlice(std.json.Value, arena, try std.json.Stringify.valueAlloc(arena, .{ .ids = &[_][]const u8{value} }, .{}), .{})).value;
+    if (key) |value| current_query.query = (try std.json.parseFromSlice(std.json.Value, arena, try std.json.Stringify.valueAlloc(arena, .{ .doc_id = &[_][]const u8{value} }, .{}), .{})).value;
     const current_json = try encodeQueryValueForRetrievalQuery(alloc, runner, .{ .object = std.json.ObjectMap.empty }, current_query, predicates, &.{}, null, 0, .initial);
     defer alloc.free(current_json);
     const current_results = try runQueryWithResults(alloc, arena, runner, table, current_json, request.query, false, true);
@@ -2338,24 +2340,42 @@ fn executeNavigationRead(
     const limit: usize = if (request.max_context_tokens) |tokens| @intCast(@min(@max(tokens - (request.reserve_tokens orelse 4000), 0), 16384) * 4) else 32768;
     const remaining = limit -| context_bytes.*;
     const total = neighbors.items.len;
-    while (true) {
-        const payload = try std.json.Stringify.valueAlloc(arena, .{
-            .current = current,
-            .neighbors = neighbors.items,
-            .workflow_instruction = if (state.moves == 0) config.instruction else null,
-            .node_instruction = node_instruction,
-            .remaining_steps = @max(0, (config.max_steps orelse 8) - state.moves),
-            .truncated = neighbors_truncated or neighbors.items.len < total,
-        }, .{ .emit_null_optional_fields = false });
-        if (payload.len <= remaining) {
-            context_bytes.* += payload.len;
-            // Only keys actually shown to the model may be selected later.
-            state.neighbors = try neighbors.toOwnedSlice(arena);
-            return payload;
+    var value = .{
+        .current = current,
+        .neighbors = neighbors.items,
+        .workflow_instruction = if (state.moves == 0) config.instruction else null,
+        .node_instruction = node_instruction,
+        .remaining_steps = @max(0, (config.max_steps orelse 8) - state.moves),
+        .truncated = neighbors_truncated,
+    };
+    // Search for the largest fitting prefix using temporary allocations. Only
+    // the final payload belongs to the request arena; oversized trial buffers
+    // are freed immediately instead of accumulating quadratic retained memory.
+    var lower: usize = 0;
+    var upper: usize = total + 1;
+    var fitting_count: ?usize = null;
+    while (lower < upper) {
+        const count = lower + (upper - lower) / 2;
+        value.neighbors = neighbors.items[0..count];
+        value.truncated = neighbors_truncated or count < total;
+        const trial = try std.json.Stringify.valueAlloc(alloc, value, .{ .emit_null_optional_fields = false });
+        defer alloc.free(trial);
+        if (trial.len <= remaining) {
+            fitting_count = count;
+            lower = count + 1;
+        } else {
+            upper = count;
         }
-        if (neighbors.items.len == 0) return error.AgentContextLimitExceeded;
-        neighbors.items.len -= 1;
     }
+    const count = fitting_count orelse return error.AgentContextLimitExceeded;
+    value.neighbors = neighbors.items[0..count];
+    value.truncated = neighbors_truncated or count < total;
+    const payload = try std.json.Stringify.valueAlloc(arena, value, .{ .emit_null_optional_fields = false });
+    context_bytes.* += payload.len;
+    // Only keys actually shown to the model may be selected later.
+    neighbors.items.len = count;
+    state.neighbors = try neighbors.toOwnedSlice(arena);
+    return payload;
 }
 
 fn appendNavigationStep(arena: std.mem.Allocator, steps: *std.ArrayListUnmanaged(AgentStep), live: *LiveEmitter, call: generating.ToolCall, index: usize, from_key: ?[]const u8, current_key: ?[]const u8, moves: i64) !void {
@@ -10672,13 +10692,13 @@ const NavigationTestRunner = struct {
             if (self.seed) {
                 try std.testing.expect(parsed.value.full_text_search != null);
             } else {
-                try std.testing.expectEqualStrings("a", parsed.value.query.?.object.get("ids").?.array.items[0].string);
+                try std.testing.expectEqualStrings("a", parsed.value.query.?.object.get("doc_id").?.array.items[0].string);
             }
             return .{ .json = try alloc.dupe(u8,
                 \\{"responses":[{"status":200,"took":1,"hits":{"hits":[{"_id":"a","_score":1,"_source":{"body":"first evidence CANARY-731","instructions":"Retain the canary from node a."}}]}}]}
             ) };
         }
-        try std.testing.expectEqualStrings("b", parsed.value.query.?.object.get("ids").?.array.items[0].string);
+        try std.testing.expectEqualStrings("b", parsed.value.query.?.object.get("doc_id").?.array.items[0].string);
         return .{ .json = try alloc.dupe(u8,
             \\{"responses":[{"status":200,"took":1,"hits":{"hits":[{"_id":"b","_score":1,"_source":{"body":"second evidence","instructions":"Combine with the previous evidence."}}]}}]}
         ) };
@@ -10987,4 +11007,69 @@ test "retrieval graph navigation terminal answer preserves embedded JSON provide
     });
     defer result.deinit();
     try std.testing.expectEqualStrings("grounded answer", result.content);
+}
+
+test "retrieval graph navigation supports named full text seed indexes" {
+    const alloc = std.testing.allocator;
+    const no_start = try std.mem.replaceOwned(u8, alloc, navigation_test_body, "\"start_key\":\"a\",", "");
+    defer alloc.free(no_start);
+    const body = try std.mem.replaceOwned(u8, alloc, no_start, "\"table\":\"docs\"", "\"table\":\"docs\",\"full_text_index\":\"document_text\",\"full_text_search\":{\"match\":\"evidence\",\"field\":\"body\"}");
+    defer alloc.free(body);
+    const CanonicalRunner = struct {
+        fn query(ptr: *anyopaque, a: std.mem.Allocator, table: []const u8, wire: []const u8) !query_api.QueryResponse {
+            var parsed = try query_contract.parsePublicQueryRequest(a, null, table, wire);
+            defer parsed.deinit(a);
+            return NavigationTestRunner.query(ptr, a, table, wire);
+        }
+    };
+    for ([_]bool{ true, false }) |seed| {
+        const request_body = if (seed) try alloc.dupe(u8, body) else try std.mem.replaceOwned(u8, alloc, body, "\"index\":\"links\"", "\"index\":\"links\",\"start_key\":\"a\"");
+        defer alloc.free(request_body);
+        var fake = NavigationTestRunner{ .seed = seed };
+        const result = try executeJson(alloc, .{ .ptr = &fake, .vtable = &.{ .run_query = CanonicalRunner.query } }, fake.generator(), request_body);
+        defer alloc.free(result);
+        try std.testing.expectEqual(@as(usize, 3), fake.reads);
+    }
+}
+
+test "retrieval graph navigation pruning uses memory proportional to candidates" {
+    const Fake = struct {
+        fn query(_: *anyopaque, alloc: std.mem.Allocator, _: []const u8, body: []const u8) !query_api.QueryResponse {
+            if (std.mem.indexOf(u8, body, "graph_queries") == null) return .{ .json = try alloc.dupe(u8,
+                \\{"responses":[{"status":200,"took":1,"hits":{"hits":[{"_id":"a","_score":1,"_source":{}}]}}]}
+            ) };
+            var scratch = std.heap.ArenaAllocator.init(alloc);
+            defer scratch.deinit();
+            const a = scratch.allocator();
+            var document = JsonObject{};
+            try document.map.put(a, "body", .{ .string = "x" ** 1024 });
+            const nodes = try a.alloc(indexes_openapi.GraphResultNode, 256);
+            for (nodes, 0..) |*node, i| node.* = .{ .key = try std.fmt.allocPrint(a, "node-{d}", .{i}), .depth = 1, .document = document };
+            return .{ .json = try std.json.Stringify.valueAlloc(alloc, .{ .responses = .{.{ .status = 200, .took = 1, .graph_results = .{ .navigation = .{ .kind = "nodes", .nodes = nodes, .stats = .{ .returned_items = 256, .truncated = false } } } }} }, .{ .emit_null_optional_fields = false }) };
+        }
+    };
+    const alloc = std.testing.allocator;
+    for ([_]i64{ 256, 300 }) |tokens| {
+        var arena_impl = std.heap.ArenaAllocator.init(alloc);
+        defer arena_impl.deinit();
+        const arena = arena_impl.allocator();
+        var parsed = try parseJsonBody(RetrievalAgentRequest, alloc,
+            \\{"query":"walk","max_context_tokens":256,"reserve_tokens":0,"queries":[{"table":"docs","graph_navigation":{"index":"links","neighbor_limit":256}}]}
+        );
+        defer parsed.deinit();
+        parsed.value.max_context_tokens = tokens;
+        var state = GraphNavigationState{};
+        var context_bytes: usize = 0;
+        var hits = std.ArrayListUnmanaged(QueryHit).empty;
+        var seen = std.StringHashMapUnmanaged(void).empty;
+        var live = LiveEmitter{ .alloc = alloc };
+        const payload = try executeNavigationRead(alloc, arena, .{ .ptr = undefined, .vtable = &.{ .run_query = Fake.query } }, parsed.value, parsed.value.queries[0], .{}, "a", &state, &context_bytes, &hits, &seen, &live);
+        try std.testing.expect(payload.len <= @as(usize, @intCast(tokens * 4)));
+        try std.testing.expectEqual(@as(usize, if (tokens == 256) 0 else 1), state.neighbors.len);
+        if (tokens == 300) {
+            try std.testing.expect(state.canMove(parsed.value.queries[0].graph_navigation.?, "node-0"));
+            try std.testing.expect(!state.canMove(parsed.value.queries[0].graph_navigation.?, "node-1"));
+        }
+        try std.testing.expect(arena_impl.queryCapacity() < 8 * 1024 * 1024);
+    }
 }
