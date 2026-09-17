@@ -1,6 +1,13 @@
-import type { GraphNavigationConfig, QueryRequest, RetrievalAgentRequest } from "../src/index.js";
+import type {
+  RetrievalNavigationConfig,
+  QueryRequest,
+  RetrievalAgentRequest,
+} from "../src/index.js";
 
-const navigation: GraphNavigationConfig = {
+const navigation: RetrievalNavigationConfig = {
+  query_index: 0,
+  strategy: "graph",
+  selection: "agentic",
   index: "workflow",
   start_key: "start",
   direction: "in",
@@ -14,7 +21,8 @@ const request: RetrievalAgentRequest = {
   query: "Find the resolution",
   max_internal_iterations: 8,
   generator: { provider: "antfly", model: "test" },
-  queries: [{ table: "runbooks", graph_navigation: navigation }],
+  queries: [{ table: "runbooks" }],
+  steps: { retrieval: { navigation } },
 };
 void request;
 
@@ -23,3 +31,24 @@ const query: QueryRequest = {
   graph_navigation: navigation,
 };
 void query;
+
+const tree: RetrievalNavigationConfig = {
+  query_index: 0,
+  strategy: "tree",
+  selection: "agentic",
+  index: "sections",
+  max_depth: 5,
+  beam_width: 3,
+};
+void tree;
+const retrievalQuery: RetrievalAgentRequest["queries"][number] = {
+  // @ts-expect-error Agent navigation is configured on the retrieval step.
+  graph_navigation: navigation,
+};
+void retrievalQuery;
+
+const removedTree: RetrievalAgentRequest["queries"][number] = {
+  // @ts-expect-error Tree exploration is configured on the retrieval step.
+  tree_search: { index: "sections" },
+};
+void removedTree;

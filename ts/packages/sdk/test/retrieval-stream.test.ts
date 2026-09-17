@@ -183,12 +183,26 @@ it("sends graph navigation through the retrieval endpoint and preserves the agen
     stream: false,
     max_internal_iterations: 8,
     generator: { provider: "antfly", model: "test" },
-    queries: [{ table: "runbooks", graph_navigation: { index: "workflow", start_key: "start" } }],
+    queries: [{ table: "runbooks" }],
+    steps: {
+      retrieval: {
+        navigation: {
+          query_index: 0,
+          strategy: "graph",
+          selection: "agentic",
+          index: "workflow",
+          start_key: "start",
+        },
+      },
+    },
   });
   expect(response).toEqual(result);
   const [url, options] = fetch.mock.calls[0];
   expect(String(url)).toContain("/agents/retrieval");
-  expect(JSON.parse(String(options?.body)).queries[0].graph_navigation).toEqual({
+  expect(JSON.parse(String(options?.body)).steps.retrieval.navigation).toEqual({
+    query_index: 0,
+    strategy: "graph",
+    selection: "agentic",
     index: "workflow",
     start_key: "start",
   });

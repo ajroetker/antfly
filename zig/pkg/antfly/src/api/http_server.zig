@@ -33061,7 +33061,7 @@ test "api http server query builder handles tree graph indexes" {
     defer inferred.deinit();
     try std.testing.expectEqualStrings("tree", inferred.value.specialist.?);
     try std.testing.expect(inferred.value.retrieval_query_request != null);
-    try std.testing.expectEqualStrings("doc_hierarchy", inferred.value.retrieval_query_request.?.tree_search.?.index);
+    try std.testing.expectEqualStrings("doc_hierarchy", inferred.value.retrieval_navigation.?.index);
 
     var graph_inferred_resp = try executeHttpxTestRequest(&server, .{
         .method = .POST,
@@ -33100,7 +33100,7 @@ test "api http server query builder handles tree graph indexes" {
     var answer = try std.json.parseFromSlice(metadata_openapi.QueryBuilderResult, alloc, answer_resp.body, .{});
     defer answer.deinit();
     try std.testing.expectEqual(metadata_openapi.AgentStatus.completed, answer.value.status.?);
-    try std.testing.expectEqualStrings("topic_graph", answer.value.retrieval_query_request.?.tree_search.?.index);
+    try std.testing.expectEqualStrings("topic_graph", answer.value.retrieval_navigation.?.index);
 
     var graph_question_resp = try executeHttpxTestRequest(&server, .{
         .method = .POST,
