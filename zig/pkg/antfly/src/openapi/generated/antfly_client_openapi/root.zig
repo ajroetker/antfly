@@ -356,6 +356,7 @@ pub const GraphMetricResult = types.GraphMetricResult;
 pub const GraphMetricRuntimeStats = types.GraphMetricRuntimeStats;
 pub const GraphMetricScore = types.GraphMetricScore;
 pub const GraphMetricStatus = types.GraphMetricStatus;
+pub const GraphNavigationConfig = types.GraphNavigationConfig;
 pub const GraphNodeSelector = types.GraphNodeSelector;
 pub const GraphNodesResult = types.GraphNodesResult;
 pub const GraphNotEqualPredicate = types.GraphNotEqualPredicate;

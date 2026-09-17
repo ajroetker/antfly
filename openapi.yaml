@@ -16942,6 +16942,68 @@ components:
           maximum: 20
           default: 3
           description: Number of branches to explore at each level
+    GraphNavigationConfig:
+      type: object
+      additionalProperties: false
+      required:
+        - index
+      description: >
+        Model-directed single-path navigation within this query's table. Requires
+
+        agentic mode and a retrieval generator. Search starts the walk; subsequent
+
+        navigation selects only an offered, unvisited neighbor. All reads enforce
+
+        the retrieval request's mandatory predicates and authenticated row filters.
+
+        Uses the enclosing agent's model, history, iteration budget and result.
+      properties:
+        index:
+          type: string
+          minLength: 1
+          pattern: .*\S.*
+          description: Graph index used for every neighbor read.
+        start_key:
+          type: string
+          minLength: 1
+          description: Explicit start node. If omitted, use the first hit of the query.
+        direction:
+          $ref: '#/components/schemas/EdgeDirection'
+          description: Direction for every hop; defaults to out.
+        edge_types:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/GraphEdgeType'
+        max_steps:
+          type: integer
+          minimum: 1
+          maximum: 20
+          default: 8
+          description: Maximum moves after the start node. The enclosing agent's iteration and tool limits
+            also apply.
+        neighbor_limit:
+          type: integer
+          minimum: 1
+          maximum: 256
+          default: 8
+          description: Maximum candidate neighbors per node, further limited by the context budget.
+        instruction:
+          type: string
+          minLength: 1
+          description: Optional caller-supplied workflow instruction retained in agent history.
+        instruction_field:
+          type: string
+          minLength: 1
+          description: >
+            Explicitly opt in to following instructions from this top-level string
+
+            field of each visited document. Instructions accumulate in agent history.
+
+            Other document fields and unvisited neighbors remain untrusted evidence.
+
+            The field must be included if the query uses a fields projection.
     RetrievalQueryRequest:
       description: >
         A canonical query in the retrieval pipeline with an optional tree search
@@ -16961,6 +17023,10 @@ components:
             tree_search:
               $ref: '#/components/schemas/TreeSearchConfig'
               description: Optional tree search configuration
+            graph_navigation:
+              $ref: '#/components/schemas/GraphNavigationConfig'
+              description: Optional model-directed graph navigation. Mutually exclusive with tree_search
+                and graph_queries.
     AgentQuestionKind:
       type: string
       enum:
@@ -17275,7 +17341,7 @@ components:
       description: >
         Request for the retrieval agent. Queries define which tables and indexes
 
-        to search, each as a QueryRequest with optional tree search configuration.
+        to search, each as a QueryRequest with optional tree search or graph navigation configuration.
 
 
         **Pipeline mode** (default, max_internal_iterations=0): Queries are executed

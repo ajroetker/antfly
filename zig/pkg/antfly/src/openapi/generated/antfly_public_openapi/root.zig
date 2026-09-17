@@ -106,6 +106,7 @@ pub const GraphMatchOperationLimitExceededError = types.GraphMatchOperationLimit
 pub const GraphMetricActionResponse = types.GraphMetricActionResponse;
 pub const GraphMetricProfile = types.GraphMetricProfile;
 pub const GraphMetricRerankScoreDetails = types.GraphMetricRerankScoreDetails;
+pub const GraphNavigationConfig = types.GraphNavigationConfig;
 pub const GraphPathWeightDomainError = types.GraphPathWeightDomainError;
 pub const GraphQueryUnprocessableError = types.GraphQueryUnprocessableError;
 pub const GraphQueryUnsupportedError = types.GraphQueryUnsupportedError;

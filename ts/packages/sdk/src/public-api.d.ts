@@ -7790,6 +7790,41 @@ export interface components {
             beam_width?: number;
         };
         /**
+         * @description Model-directed single-path navigation within this query's table. Requires
+         *     agentic mode and a retrieval generator. Search starts the walk; subsequent
+         *     navigation selects only an offered, unvisited neighbor. All reads enforce
+         *     the retrieval request's mandatory predicates and authenticated row filters.
+         *     Uses the enclosing agent's model, history, iteration budget and result.
+         */
+        GraphNavigationConfig: {
+            /** @description Graph index used for every neighbor read. */
+            index: string;
+            /** @description Explicit start node. If omitted, use the first hit of the query. */
+            start_key?: string;
+            /** @description Direction for every hop; defaults to out. */
+            direction?: components["schemas"]["EdgeDirection"];
+            edge_types?: components["schemas"]["GraphEdgeType"][];
+            /**
+             * @description Maximum moves after the start node. The enclosing agent's iteration and tool limits also apply.
+             * @default 8
+             */
+            max_steps?: number;
+            /**
+             * @description Maximum candidate neighbors per node, further limited by the context budget.
+             * @default 8
+             */
+            neighbor_limit?: number;
+            /** @description Optional caller-supplied workflow instruction retained in agent history. */
+            instruction?: string;
+            /**
+             * @description Explicitly opt in to following instructions from this top-level string
+             *     field of each visited document. Instructions accumulate in agent history.
+             *     Other document fields and unvisited neighbors remain untrusted evidence.
+             *     The field must be included if the query uses a fields projection.
+             */
+            instruction_field?: string;
+        };
+        /**
          * @description A canonical query in the retrieval pipeline with an optional tree search
          *     configuration. Each query specifies its own table. Deprecated stateful
          *     graph_searches compatibility is intentionally unavailable here.
@@ -7800,6 +7835,8 @@ export interface components {
         RetrievalQueryRequest: components["schemas"]["QueryRequest"] & {
             /** @description Optional tree search configuration */
             tree_search?: components["schemas"]["TreeSearchConfig"];
+            /** @description Optional model-directed graph navigation. Mutually exclusive with tree_search and graph_queries. */
+            graph_navigation?: components["schemas"]["GraphNavigationConfig"];
         };
         /**
          * @description UI rendering/answer handling hint for a bounded agent question
@@ -8005,7 +8042,7 @@ export interface components {
         };
         /**
          * @description Request for the retrieval agent. Queries define which tables and indexes
-         *     to search, each as a QueryRequest with optional tree search configuration.
+         *     to search, each as a QueryRequest with optional tree search or graph navigation configuration.
          *
          *     **Pipeline mode** (default, max_internal_iterations=0): Queries are executed
          *     directly without an LLM tool-calling loop.
