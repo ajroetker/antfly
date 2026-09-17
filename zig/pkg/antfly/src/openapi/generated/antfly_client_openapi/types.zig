@@ -14699,98 +14699,6 @@ pub const GoogleGeneratorConfig = struct {
     }
 };
 
-pub const GraphAgentQuery = struct {
-    index: []const u8,
-    graph_agent: GraphAgentTraversal,
-};
-
-/// Bounded single-branch graph traversal driven by a generator. The model may select only one of the returned neighbor keys at each step. The instruction source is optional; when omitted the generator receives the current document and neighbor documents as context.
-pub const GraphAgentTraversal = struct {
-    start: GraphNodeSelector,
-    /// User request supplied to every graph-agent decision.
-    query: []const u8,
-    direction: ?EdgeDirection = null,
-    edge_types: ?[]const GraphEdgeType = null,
-    max_steps: ?i64 = null,
-    neighbor_limit: ?i64 = null,
-    /// Optional system instruction for each graph-agent decision.
-    instruction: ?[]const u8 = null,
-    /// Optional JSON field containing the current node's instruction.
-    instruction_field: ?[]const u8 = null,
-    generator: ?GeneratorConfig = null,
-    chain: ?[]const ChainLink = null,
-    /// Include model decisions and selected nodes in the response.
-    include_trace: ?bool = null,
-
-    /// OpenAPI wire names and nullability consumed by compatible typed JSON parsers.
-    pub const openApiFieldMetadata = .{
-        .{ "start", "start", false },
-        .{ "query", "query", false },
-        .{ "direction", "direction", true },
-        .{ "edge_types", "edge_types", true },
-        .{ "max_steps", "max_steps", true },
-        .{ "neighbor_limit", "neighbor_limit", true },
-        .{ "instruction", "instruction", true },
-        .{ "instruction_field", "instruction_field", true },
-        .{ "generator", "generator", true },
-        .{ "chain", "chain", true },
-        .{ "include_trace", "include_trace", true },
-    };
-
-    pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
-        return try openApiParseObject(@This(), openApiFieldMetadata, allocator, source, options);
-    }
-
-    pub fn jsonParseFromValue(allocator: std.mem.Allocator, source: std.json.Value, options: std.json.ParseOptions) !@This() {
-        return try openApiParseObjectFromValue(@This(), openApiFieldMetadata, allocator, source, options);
-    }
-
-    pub fn jsonStringify(self: @This(), jw: anytype) !void {
-        try jw.beginObject();
-        try jw.objectField("start");
-        try jw.write(self.start);
-        try jw.objectField("query");
-        try jw.write(self.query);
-        if (self.direction) |value| {
-            try jw.objectField("direction");
-            try jw.write(value);
-        }
-        if (self.edge_types) |value| {
-            try jw.objectField("edge_types");
-            try jw.write(value);
-        }
-        if (self.max_steps) |value| {
-            try jw.objectField("max_steps");
-            try jw.write(value);
-        }
-        if (self.neighbor_limit) |value| {
-            try jw.objectField("neighbor_limit");
-            try jw.write(value);
-        }
-        if (self.instruction) |value| {
-            try jw.objectField("instruction");
-            try jw.write(value);
-        }
-        if (self.instruction_field) |value| {
-            try jw.objectField("instruction_field");
-            try jw.write(value);
-        }
-        if (self.generator) |value| {
-            try jw.objectField("generator");
-            try jw.write(value);
-        }
-        if (self.chain) |value| {
-            try jw.objectField("chain");
-            try jw.write(value);
-        }
-        if (self.include_trace) |value| {
-            try jw.objectField("include_trace");
-            try jw.write(value);
-        }
-        try jw.endObject();
-    }
-};
-
 pub const GraphAggregateValue = struct {
     /// Decimal string so counts remain lossless in JavaScript.
     value: []const u8,
@@ -17537,6 +17445,80 @@ pub const GraphMetricStatus = struct {
     }
 };
 
+/// Model-directed single-path navigation within this query's table. Requires agentic mode and a retrieval generator. Search starts the walk; subsequent navigation selects only an offered, unvisited neighbor. All reads enforce the retrieval request's mandatory predicates and authenticated row filters. Uses the enclosing agent's model, history, iteration budget and result.
+pub const GraphNavigationConfig = struct {
+    /// Graph index used for every neighbor read.
+    index: []const u8,
+    /// Explicit start node. If omitted, use the first hit of the query.
+    start_key: ?[]const u8 = null,
+    /// Direction for every hop; defaults to out.
+    direction: ?EdgeDirection = null,
+    edge_types: ?[]const GraphEdgeType = null,
+    /// Maximum moves after the start node. The enclosing agent's iteration and tool limits also apply.
+    max_steps: ?i64 = null,
+    /// Maximum candidate neighbors per node, further limited by the context budget.
+    neighbor_limit: ?i64 = null,
+    /// Optional caller-supplied workflow instruction retained in agent history.
+    instruction: ?[]const u8 = null,
+    /// Explicitly opt in to following instructions from this top-level string field of each visited document. Instructions accumulate in agent history. Other document fields and unvisited neighbors remain untrusted evidence. The field must be included if the query uses a fields projection.
+    instruction_field: ?[]const u8 = null,
+
+    /// OpenAPI wire names and nullability consumed by compatible typed JSON parsers.
+    pub const openApiFieldMetadata = .{
+        .{ "index", "index", false },
+        .{ "start_key", "start_key", true },
+        .{ "direction", "direction", true },
+        .{ "edge_types", "edge_types", true },
+        .{ "max_steps", "max_steps", true },
+        .{ "neighbor_limit", "neighbor_limit", true },
+        .{ "instruction", "instruction", true },
+        .{ "instruction_field", "instruction_field", true },
+    };
+
+    pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
+        return try openApiParseObject(@This(), openApiFieldMetadata, allocator, source, options);
+    }
+
+    pub fn jsonParseFromValue(allocator: std.mem.Allocator, source: std.json.Value, options: std.json.ParseOptions) !@This() {
+        return try openApiParseObjectFromValue(@This(), openApiFieldMetadata, allocator, source, options);
+    }
+
+    pub fn jsonStringify(self: @This(), jw: anytype) !void {
+        try jw.beginObject();
+        try jw.objectField("index");
+        try jw.write(self.index);
+        if (self.start_key) |value| {
+            try jw.objectField("start_key");
+            try jw.write(value);
+        }
+        if (self.direction) |value| {
+            try jw.objectField("direction");
+            try jw.write(value);
+        }
+        if (self.edge_types) |value| {
+            try jw.objectField("edge_types");
+            try jw.write(value);
+        }
+        if (self.max_steps) |value| {
+            try jw.objectField("max_steps");
+            try jw.write(value);
+        }
+        if (self.neighbor_limit) |value| {
+            try jw.objectField("neighbor_limit");
+            try jw.write(value);
+        }
+        if (self.instruction) |value| {
+            try jw.objectField("instruction");
+            try jw.write(value);
+        }
+        if (self.instruction_field) |value| {
+            try jw.objectField("instruction_field");
+            try jw.write(value);
+        }
+        try jw.endObject();
+    }
+};
+
 /// Select graph nodes using exactly one explicit, exact selector form.
 pub const GraphNodeSelector = union(enum) {
     graph_result_ref_node_selector: *GraphResultRefNodeSelector,
@@ -17894,7 +17876,6 @@ pub const GraphQueries = std.json.ArrayHashMap(GraphQuery);
 
 pub const GraphQuery = union(enum) {
     graph_match_query: *GraphMatchQuery,
-    graph_agent_query: *GraphAgentQuery,
     graph_k_shortest_paths_query: *GraphKShortestPathsQuery,
     graph_shortest_path_query: *GraphShortestPathQuery,
     graph_traverse_query: *GraphTraverseQuery,
@@ -17932,12 +17913,6 @@ pub const GraphQuery = union(enum) {
         }
         if (objectHasAnyKey(source.object, &.{
             "index",
-            "graph_agent",
-        })) {
-            if (try parseStructuralVariant(GraphAgentQuery, allocator, source, options)) |parsed| return .{ .graph_agent_query = parsed };
-        }
-        if (objectHasAnyKey(source.object, &.{
-            "index",
             "k_shortest_paths",
         })) {
             if (try parseStructuralVariant(GraphKShortestPathsQuery, allocator, source, options)) |parsed| return .{ .graph_k_shortest_paths_query = parsed };
@@ -17960,7 +17935,6 @@ pub const GraphQuery = union(enum) {
     pub fn jsonStringify(self: @This(), jw: anytype) !void {
         switch (self) {
             .graph_match_query => |v| try jw.write(v.*),
-            .graph_agent_query => |v| try jw.write(v.*),
             .graph_k_shortest_paths_query => |v| try jw.write(v.*),
             .graph_shortest_path_query => |v| try jw.write(v.*),
             .graph_traverse_query => |v| try jw.write(v.*),
@@ -30918,7 +30892,7 @@ pub const RestoreRequest = struct {
     connection: []const u8,
 };
 
-/// Request for the retrieval agent. Queries define which tables and indexes to search, each as a QueryRequest with optional tree search configuration. **Pipeline mode** (default, max_internal_iterations=0): Queries are executed directly without an LLM tool-calling loop. **Agentic mode** (max_internal_iterations > 0): The LLM decides which tools to call, using the queries to determine available tables and indexes. A query may contain only a table scope and caller constraints: build_query delegates to the query-builder agent, then search executes its validated QueryRequest. Refinements use the same canonical full-DSL validator, not keyword substitution. Authenticated row filters are enforced on every initial and generated operation in both modes, including scans, aggregates, and graph/tree traversal. They cannot be replaced or weakened by model tool arguments.
+/// Request for the retrieval agent. Queries define which tables and indexes to search, each as a QueryRequest with optional tree search or graph navigation configuration. **Pipeline mode** (default, max_internal_iterations=0): Queries are executed directly without an LLM tool-calling loop. **Agentic mode** (max_internal_iterations > 0): The LLM decides which tools to call, using the queries to determine available tables and indexes. A query may contain only a table scope and caller constraints: build_query delegates to the query-builder agent, then search executes its validated QueryRequest. Refinements use the same canonical full-DSL validator, not keyword substitution. Authenticated row filters are enforced on every initial and generated operation in both modes, including scans, aggregates, and graph/tree traversal. They cannot be replaced or weakened by model tool arguments.
 pub const RetrievalAgentRequest = struct {
     /// User's natural language query
     query: []const u8,
@@ -31458,6 +31432,8 @@ pub const RetrievalQueryRequest = struct {
     foreign_sources: ?std.json.ArrayHashMap(ForeignSource) = null,
     /// Optional tree search configuration
     tree_search: ?TreeSearchConfig = null,
+    /// Optional model-directed graph navigation. Mutually exclusive with tree_search and graph_queries.
+    graph_navigation: ?GraphNavigationConfig = null,
 
     /// OpenAPI wire names and nullability consumed by compatible typed JSON parsers.
     pub const openApiFieldMetadata = .{
@@ -31497,6 +31473,7 @@ pub const RetrievalQueryRequest = struct {
         .{ "join", "join", true },
         .{ "foreign_sources", "foreign_sources", true },
         .{ "tree_search", "tree_search", true },
+        .{ "graph_navigation", "graph_navigation", true },
     };
 
     pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
@@ -31651,6 +31628,10 @@ pub const RetrievalQueryRequest = struct {
         }
         if (self.tree_search) |value| {
             try jw.objectField("tree_search");
+            try jw.write(value);
+        }
+        if (self.graph_navigation) |value| {
+            try jw.objectField("graph_navigation");
             try jw.write(value);
         }
         try jw.endObject();

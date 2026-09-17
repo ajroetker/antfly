@@ -8667,7 +8667,6 @@ pub fn parseGraphQuery(
             std.math.cast(u32, value.k_shortest_paths.k) orelse return error.InvalidQueryRequest,
             .k_shortest_paths,
         ),
-        .graph_agent_query => return error.UnsupportedQueryRequest,
     };
 }
 

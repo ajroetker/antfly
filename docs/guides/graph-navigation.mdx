@@ -1,0 +1,70 @@
+---
+title: "Navigate a graph with the retrieval agent"
+description: "Follow a model-selected path through a graph while retaining evidence and optional workflow instructions."
+---
+
+Use `graph_navigation` on a retrieval query to follow one path through a graph.
+The retrieval agent chooses from the visible neighbors of each visited node,
+retains the evidence in its conversation, and returns the normal retrieval result.
+
+```bash
+curl -X POST http://127.0.0.1:8080/db/v1/agents/retrieval \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "query": "Find the troubleshooting steps for a failed deployment",
+    "stream": false,
+    "max_internal_iterations": 8,
+    "generator": {"provider": "antfly", "model": "your-tool-capable-model"},
+    "steps": {"generation": {"enabled": true}},
+    "queries": [{
+      "table": "runbooks",
+      "full_text_search": {"match": "deployment", "field": "title"},
+      "filter_query": {"term": "published", "field": "status"},
+      "graph_navigation": {
+        "index": "workflow",
+        "direction": "out",
+        "edge_types": ["next"],
+        "max_steps": 4,
+        "neighbor_limit": 8,
+        "instruction_field": "instructions"
+      }
+    }]
+  }'
+```
+
+Omit `start_key` to start at the first search hit. Set it to an explicit document
+key to start there instead. Explicit starts and every subsequent read enforce
+mandatory retrieval filters and authenticated row filters. Navigation stays in
+the configured table; foreign-table neighbors and missing documents are not offered.
+Direction and edge types apply to every hop. With a fields projection, include
+the instruction field if you want the agent to read it.
+
+The agent calls `search` to start and `navigate` to select an offered, unvisited
+neighbor. It can answer at any point. A repeated search cannot restart the walk
+or reset its move budget. `max_steps` limits moves after the start node;
+`max_internal_iterations` limits the enclosing model rounds, including planning
+and the final answer. The normal 20-tool-call cap also applies. When the model
+round or accumulated navigation context budget is exhausted, the agent returns
+`status: "incomplete"` with evidence and steps collected so far. Neighbor lists
+are pruned before visited evidence or instructions; if even the current node
+cannot fit, navigation stops. Increase the context budget or narrow the fields
+projection for large documents.
+
+`instruction_field` explicitly opts in to following a top-level string field
+from each **visited** document. Those instructions accumulate alongside earlier
+evidence. Without it, document fields remain evidence, even if named
+`instructions`. Unvisited neighbor content is always evidence. An optional
+`graph_navigation.instruction` supplies a caller-defined workflow rule. Neither
+kind of instruction can change the server's permitted tables, filters, or budgets.
+
+Read visited documents from `hits`, the answer from `generation`, and the path
+from `steps` named `graph_navigation`. Step details include `query_index`,
+`from_key`, `current_key`, `moves`, and `tool_call_id`. `usage` reports model call
+and retrieved-resource counts; token totals remain absent when unavailable from
+the generation backend. With `stream: true`, the same execution emits standard
+retrieval hit, step, generation, and done events.
+
+Use `tree_search` when you want branch ranking and expansion over a hierarchy.
+Use `graph_navigation` when you want the model to choose a single path, optionally
+following workflow instructions. These configurations are mutually exclusive,
+and neither adds an LLM operation to the canonical `graph_queries` API.

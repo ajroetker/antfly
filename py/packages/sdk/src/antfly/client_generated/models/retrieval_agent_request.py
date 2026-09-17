@@ -25,7 +25,7 @@ T = TypeVar("T", bound="RetrievalAgentRequest")
 @_attrs_define
 class RetrievalAgentRequest:
     """Request for the retrieval agent. Queries define which tables and indexes
-    to search, each as a QueryRequest with optional tree search configuration.
+    to search, each as a QueryRequest with optional tree search or graph navigation configuration.
 
     **Pipeline mode** (default, max_internal_iterations=0): Queries are executed
     directly without an LLM tool-calling loop.

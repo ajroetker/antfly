@@ -555,6 +555,7 @@ from .graph_metric_runtime_stats_role import GraphMetricRuntimeStatsRole
 from .graph_metric_score import GraphMetricScore
 from .graph_metric_status import GraphMetricStatus
 from .graph_metric_status_phase import GraphMetricStatusPhase
+from .graph_navigation_config import GraphNavigationConfig
 from .graph_nodes_result import GraphNodesResult
 from .graph_nodes_result_kind import GraphNodesResultKind
 from .graph_nodes_result_metric_status import GraphNodesResultMetricStatus
@@ -1750,6 +1751,7 @@ __all__ = (
     "GraphMetricScore",
     "GraphMetricStatus",
     "GraphMetricStatusPhase",
+    "GraphNavigationConfig",
     "GraphNodesResult",
     "GraphNodesResultKind",
     "GraphNodesResultMetricStatus",

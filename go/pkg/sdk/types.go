@@ -237,6 +237,7 @@ type (
 	RetrievalQueryRequest = oapi.RetrievalQueryRequest
 	RetrievalStrategy     = oapi.RetrievalStrategy
 	TreeSearchConfig      = oapi.TreeSearchConfig
+	GraphNavigationConfig = oapi.GraphNavigationConfig
 	QueryHit              = oapi.QueryHit
 
 	// Evaluation types

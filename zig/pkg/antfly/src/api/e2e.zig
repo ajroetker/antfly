@@ -5333,8 +5333,8 @@ test "public api e2e agentic retrieval evaluates misses and falls back to the ne
     var saw_evaluation_select = false;
     for (parsed.value.steps.?) |step| {
         if (std.mem.eql(u8, step.name, "evaluate")) saw_evaluate = true;
-        if (std.mem.eql(u8, step.name, "select_strategy") and step.details != null and step.details.? == .object) {
-            if (step.details.?.object.get("selection_source")) |selection_source| {
+        if (std.mem.eql(u8, step.name, "select_strategy") and step.details != null) {
+            if (step.details.?.map.get("selection_source")) |selection_source| {
                 if (selection_source == .string and std.mem.eql(u8, selection_source.string, "evaluation")) {
                     saw_evaluation_select = true;
                 }

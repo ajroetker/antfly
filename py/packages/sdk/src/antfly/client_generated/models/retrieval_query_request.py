@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from ..models.geo_shape_query import GeoShapeQuery
     from ..models.graph_metric_query import GraphMetricQuery
     from ..models.graph_metric_rerank import GraphMetricRerank
+    from ..models.graph_navigation_config import GraphNavigationConfig
     from ..models.graph_queries import GraphQueries
     from ..models.ip_range_query import IPRangeQuery
     from ..models.join_clause import JoinClause
@@ -389,6 +390,12 @@ class RetrievalQueryRequest:
             tree_search (TreeSearchConfig | Unset): Configuration for tree search strategy. Tree search navigates
                 hierarchical
                 document structures by evaluating summaries at each level.
+            graph_navigation (GraphNavigationConfig | Unset): Model-directed single-path navigation within this query's
+                table. Requires
+                agentic mode and a retrieval generator. Search starts the walk; subsequent
+                navigation selects only an offered, unvisited neighbor. All reads enforce
+                the retrieval request's mandatory predicates and authenticated row filters.
+                Uses the enclosing agent's model, history, iteration budget and result.
     """
 
     table: str | Unset = UNSET
@@ -511,6 +518,7 @@ class RetrievalQueryRequest:
     join: JoinClause | Unset = UNSET
     foreign_sources: QueryRequestForeignSources | Unset = UNSET
     tree_search: TreeSearchConfig | Unset = UNSET
+    graph_navigation: GraphNavigationConfig | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -815,6 +823,10 @@ class RetrievalQueryRequest:
         if not isinstance(self.tree_search, Unset):
             tree_search = self.tree_search.to_dict()
 
+        graph_navigation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.graph_navigation, Unset):
+            graph_navigation = self.graph_navigation.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -890,6 +902,8 @@ class RetrievalQueryRequest:
             field_dict["foreign_sources"] = foreign_sources
         if tree_search is not UNSET:
             field_dict["tree_search"] = tree_search
+        if graph_navigation is not UNSET:
+            field_dict["graph_navigation"] = graph_navigation
 
         return field_dict
 
@@ -909,6 +923,7 @@ class RetrievalQueryRequest:
         from ..models.geo_shape_query import GeoShapeQuery
         from ..models.graph_metric_query import GraphMetricQuery
         from ..models.graph_metric_rerank import GraphMetricRerank
+        from ..models.graph_navigation_config import GraphNavigationConfig
         from ..models.graph_queries import GraphQueries
         from ..models.ip_range_query import IPRangeQuery
         from ..models.join_clause import JoinClause
@@ -1804,6 +1819,13 @@ class RetrievalQueryRequest:
         else:
             tree_search = TreeSearchConfig.from_dict(_tree_search)
 
+        _graph_navigation = d.pop("graph_navigation", UNSET)
+        graph_navigation: GraphNavigationConfig | Unset
+        if isinstance(_graph_navigation, Unset):
+            graph_navigation = UNSET
+        else:
+            graph_navigation = GraphNavigationConfig.from_dict(_graph_navigation)
+
         retrieval_query_request = cls(
             table=table,
             query=query,
@@ -1841,6 +1863,7 @@ class RetrievalQueryRequest:
             join=join,
             foreign_sources=foreign_sources,
             tree_search=tree_search,
+            graph_navigation=graph_navigation,
         )
 
         retrieval_query_request.additional_properties = d

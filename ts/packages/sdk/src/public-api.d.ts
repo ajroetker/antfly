@@ -7044,6 +7044,41 @@ export interface components {
             beam_width?: number;
         };
         /**
+         * @description Model-directed single-path navigation within this query's table. Requires
+         *     agentic mode and a retrieval generator. Search starts the walk; subsequent
+         *     navigation selects only an offered, unvisited neighbor. All reads enforce
+         *     the retrieval request's mandatory predicates and authenticated row filters.
+         *     Uses the enclosing agent's model, history, iteration budget and result.
+         */
+        GraphNavigationConfig: {
+            /** @description Graph index used for every neighbor read. */
+            index: string;
+            /** @description Explicit start node. If omitted, use the first hit of the query. */
+            start_key?: string;
+            /** @description Direction for every hop; defaults to out. */
+            direction?: components["schemas"]["EdgeDirection"];
+            edge_types?: components["schemas"]["GraphEdgeType"][];
+            /**
+             * @description Maximum moves after the start node. The enclosing agent's iteration and tool limits also apply.
+             * @default 8
+             */
+            max_steps?: number;
+            /**
+             * @description Maximum candidate neighbors per node, further limited by the context budget.
+             * @default 8
+             */
+            neighbor_limit?: number;
+            /** @description Optional caller-supplied workflow instruction retained in agent history. */
+            instruction?: string;
+            /**
+             * @description Explicitly opt in to following instructions from this top-level string
+             *     field of each visited document. Instructions accumulate in agent history.
+             *     Other document fields and unvisited neighbors remain untrusted evidence.
+             *     The field must be included if the query uses a fields projection.
+             */
+            instruction_field?: string;
+        };
+        /**
          * @description A canonical query in the retrieval pipeline with an optional tree search
          *     configuration. Each query specifies its own table. Deprecated stateful
          *     graph_searches compatibility is intentionally unavailable here.
@@ -7054,6 +7089,8 @@ export interface components {
         RetrievalQueryRequest: components["schemas"]["QueryRequest"] & {
             /** @description Optional tree search configuration */
             tree_search?: components["schemas"]["TreeSearchConfig"];
+            /** @description Optional model-directed graph navigation. Mutually exclusive with tree_search and graph_queries. */
+            graph_navigation?: components["schemas"]["GraphNavigationConfig"];
         };
         /**
          * @description UI rendering/answer handling hint for a bounded agent question
@@ -7259,7 +7296,7 @@ export interface components {
         };
         /**
          * @description Request for the retrieval agent. Queries define which tables and indexes
-         *     to search, each as a QueryRequest with optional tree search configuration.
+         *     to search, each as a QueryRequest with optional tree search or graph navigation configuration.
          *
          *     **Pipeline mode** (default, max_internal_iterations=0): Queries are executed
          *     directly without an LLM tool-calling loop.
@@ -14129,31 +14166,6 @@ export interface components {
             index: string;
             traverse: components["schemas"]["GraphTraversal"];
         };
-        /** @description Bounded single-branch graph traversal driven by a generator. The model may select only one of the returned neighbor keys at each step. The instruction source is optional; when omitted the generator receives the current document and neighbor documents as context. */
-        GraphAgentTraversal: {
-            start: components["schemas"]["GraphNodeSelector"];
-            direction?: components["schemas"]["EdgeDirection"];
-            edge_types?: components["schemas"]["GraphEdgeType"][];
-            /** @default 8 */
-            max_steps?: number;
-            /** @default 8 */
-            neighbor_limit?: number;
-            /** @description Optional system instruction for each graph-agent decision. */
-            instruction?: string;
-            /** @description Optional JSON field containing the current node's instruction. */
-            instruction_field?: string;
-            generator?: components["schemas"]["GeneratorConfig"];
-            chain?: components["schemas"]["ChainLink"][];
-            /**
-             * @description Include model decisions and selected nodes in the response.
-             * @default true
-             */
-            include_trace?: boolean;
-        };
-        GraphAgentQuery: {
-            index: string;
-            graph_agent: components["schemas"]["GraphAgentTraversal"];
-        };
         /** @description Find the best path from `from` to `to` in the requested stored-edge direction. */
         GraphShortestPath: {
             from: components["schemas"]["GraphPathEndpoint"];
@@ -14209,7 +14221,7 @@ export interface components {
             index: string;
             k_shortest_paths: components["schemas"]["GraphKShortestPaths"];
         };
-        GraphQuery: components["schemas"]["GraphMatchQuery"] | components["schemas"]["GraphTraverseQuery"] | components["schemas"]["GraphAgentQuery"] | components["schemas"]["GraphShortestPathQuery"] | components["schemas"]["GraphKShortestPathsQuery"];
+        GraphQuery: components["schemas"]["GraphMatchQuery"] | components["schemas"]["GraphTraverseQuery"] | components["schemas"]["GraphShortestPathQuery"] | components["schemas"]["GraphKShortestPathsQuery"];
         /** @description Named canonical graph operations. When graph_queries is present it must contain at least one operation. A request may contain at most 64 operations, of which at most eight may be MATCH operations. Keys use the versioned GraphIdentifier policy. */
         GraphQueries: {
             [key: string]: components["schemas"]["GraphQuery"];

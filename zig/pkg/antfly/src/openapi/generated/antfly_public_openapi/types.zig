@@ -4815,6 +4815,83 @@ pub const GraphMetricRerankScoreDetails = struct {
     }
 };
 
+/// Model-directed single-path navigation within this query's table. Requires agentic mode and a retrieval generator. Search starts the walk; subsequent navigation selects only an offered, unvisited neighbor. All reads enforce the retrieval request's mandatory predicates and authenticated row filters. Uses the enclosing agent's model, history, iteration budget and result.
+pub const GraphNavigationConfig = struct {
+    /// Graph index used for every neighbor read.
+    index: []const u8,
+    /// Explicit start node. If omitted, use the first hit of the query.
+    start_key: ?[]const u8 = null,
+    /// Direction for every hop; defaults to out.
+    direction: ?antfly_indexes_openapi.EdgeDirection = null,
+    edge_types: ?[]const antfly_indexes_openapi.GraphEdgeType = null,
+    /// Maximum moves after the start node. The enclosing agent's iteration and tool limits also apply.
+    max_steps: ?i64 = null,
+    /// Maximum candidate neighbors per node, further limited by the context budget.
+    neighbor_limit: ?i64 = null,
+    /// Optional caller-supplied workflow instruction retained in agent history.
+    instruction: ?[]const u8 = null,
+    /// Explicitly opt in to following instructions from this top-level string field of each visited document. Instructions accumulate in agent history. Other document fields and unvisited neighbors remain untrusted evidence. The field must be included if the query uses a fields projection.
+    instruction_field: ?[]const u8 = null,
+
+    /// OpenAPI wire names and nullability consumed by compatible typed JSON parsers.
+    pub const openApiFieldMetadata = .{
+        .{ "index", "index", false },
+        .{ "start_key", "start_key", true },
+        .{ "direction", "direction", false },
+        .{ "edge_types", "edge_types", true },
+        .{ "max_steps", "max_steps", true },
+        .{ "neighbor_limit", "neighbor_limit", true },
+        .{ "instruction", "instruction", true },
+        .{ "instruction_field", "instruction_field", true },
+    };
+
+    pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
+        return try openApiParseObject(@This(), openApiFieldMetadata, allocator, source, options);
+    }
+
+    pub fn jsonParseFromValue(allocator: std.mem.Allocator, source: std.json.Value, options: std.json.ParseOptions) !@This() {
+        return try openApiParseObjectFromValue(@This(), openApiFieldMetadata, allocator, source, options);
+    }
+
+    pub fn jsonStringify(self: @This(), jw: anytype) !void {
+        try jw.beginObject();
+        try jw.objectField("index");
+        try jw.write(self.index);
+        if (self.start_key) |value| {
+            try jw.objectField("start_key");
+            try jw.write(value);
+        }
+        if (self.direction) |value| {
+            try jw.objectField("direction");
+            try jw.write(value);
+        } else if (jw.options.emit_null_optional_fields) {
+            try jw.objectField("direction");
+            try jw.write(@as(?u8, null));
+        }
+        if (self.edge_types) |value| {
+            try jw.objectField("edge_types");
+            try jw.write(value);
+        }
+        if (self.max_steps) |value| {
+            try jw.objectField("max_steps");
+            try jw.write(value);
+        }
+        if (self.neighbor_limit) |value| {
+            try jw.objectField("neighbor_limit");
+            try jw.write(value);
+        }
+        if (self.instruction) |value| {
+            try jw.objectField("instruction");
+            try jw.write(value);
+        }
+        if (self.instruction_field) |value| {
+            try jw.objectField("instruction_field");
+            try jw.write(value);
+        }
+        try jw.endObject();
+    }
+};
+
 pub const GraphPathWeightDomainError = struct {
     status: i32,
     @"error": []const u8,
@@ -9232,7 +9309,7 @@ pub const RestoreRequest = struct {
     connection: []const u8,
 };
 
-/// Request for the retrieval agent. Queries define which tables and indexes to search, each as a QueryRequest with optional tree search configuration. **Pipeline mode** (default, max_internal_iterations=0): Queries are executed directly without an LLM tool-calling loop. **Agentic mode** (max_internal_iterations > 0): The LLM decides which tools to call, using the queries to determine available tables and indexes. A query may contain only a table scope and caller constraints: build_query delegates to the query-builder agent, then search executes its validated QueryRequest. Refinements use the same canonical full-DSL validator, not keyword substitution. Authenticated row filters are enforced on every initial and generated operation in both modes, including scans, aggregates, and graph/tree traversal. They cannot be replaced or weakened by model tool arguments.
+/// Request for the retrieval agent. Queries define which tables and indexes to search, each as a QueryRequest with optional tree search or graph navigation configuration. **Pipeline mode** (default, max_internal_iterations=0): Queries are executed directly without an LLM tool-calling loop. **Agentic mode** (max_internal_iterations > 0): The LLM decides which tools to call, using the queries to determine available tables and indexes. A query may contain only a table scope and caller constraints: build_query delegates to the query-builder agent, then search executes its validated QueryRequest. Refinements use the same canonical full-DSL validator, not keyword substitution. Authenticated row filters are enforced on every initial and generated operation in both modes, including scans, aggregates, and graph/tree traversal. They cannot be replaced or weakened by model tool arguments.
 pub const RetrievalAgentRequest = struct {
     /// User's natural language query
     query: []const u8,
@@ -9799,6 +9876,8 @@ pub const RetrievalQueryRequest = struct {
     foreign_sources: ?std.json.ArrayHashMap(ForeignSource) = null,
     /// Optional tree search configuration
     tree_search: ?TreeSearchConfig = null,
+    /// Optional model-directed graph navigation. Mutually exclusive with tree_search and graph_queries.
+    graph_navigation: ?GraphNavigationConfig = null,
 
     /// OpenAPI wire names and nullability consumed by compatible typed JSON parsers.
     pub const openApiFieldMetadata = .{
@@ -9838,6 +9917,7 @@ pub const RetrievalQueryRequest = struct {
         .{ "join", "join", true },
         .{ "foreign_sources", "foreign_sources", true },
         .{ "tree_search", "tree_search", true },
+        .{ "graph_navigation", "graph_navigation", true },
     };
 
     pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
@@ -10010,6 +10090,10 @@ pub const RetrievalQueryRequest = struct {
         }
         if (self.tree_search) |value| {
             try jw.objectField("tree_search");
+            try jw.write(value);
+        }
+        if (self.graph_navigation) |value| {
+            try jw.objectField("graph_navigation");
             try jw.write(value);
         }
         try jw.endObject();

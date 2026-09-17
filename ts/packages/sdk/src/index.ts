@@ -291,6 +291,7 @@ export type {
   GraphMetricRuntimeStats,
   GraphMetricScore,
   GraphMetricStatus,
+  GraphNavigationConfig,
   GraphNodeSelector,
   GraphNodesResult,
   GraphNotEqualPredicate,
