@@ -81,6 +81,7 @@ pub const Result = struct {
 pub const Config = struct {
     user_query: []const u8,
     instruction: []const u8 = "Choose the next graph node or finish the task.",
+    instruction_field: ?[]const u8 = null,
     max_steps: u32 = default_max_steps,
     neighbor_limit: u32 = default_neighbor_limit,
 };
@@ -135,6 +136,7 @@ pub fn runOpenApi(alloc: std.mem.Allocator, config: anytype, runner: Runner) !Re
     return try runWithChain(alloc, .{
         .user_query = config.query,
         .instruction = config.instruction orelse "Choose the next graph node or finish the task.",
+        .instruction_field = config.instruction_field,
         .max_steps = @intCast(config.max_steps orelse default_max_steps),
         .neighbor_limit = @intCast(config.neighbor_limit orelse default_neighbor_limit),
     }, start_key, chains, runner);
@@ -194,8 +196,18 @@ pub fn runWithChain(alloc: std.mem.Allocator, config: Config, start_key: []const
 
         const prompt = try buildPrompt(alloc, config, current, neighbors);
         defer alloc.free(prompt);
+        const node_instruction = if (config.instruction_field) |field|
+            try nodeInstructionAlloc(alloc, current, field)
+        else
+            null;
+        defer if (node_instruction) |value| alloc.free(value);
+        const system_instruction = if (node_instruction) |value|
+            try std.fmt.allocPrint(alloc, "{s}\n\nInstruction from current node:\n{s}", .{ config.instruction, value })
+        else
+            try alloc.dupe(u8, config.instruction);
+        defer alloc.free(system_instruction);
         const messages = [_]generating.ChatMessage{
-            .{ .role = .system, .content = .{ .text = config.instruction } },
+            .{ .role = .system, .content = .{ .text = system_instruction } },
             .{ .role = .user, .content = .{ .text = prompt } },
         };
         var final_generation = try runner.vtable.generate(runner.ptr, alloc, chains, &messages);
@@ -259,6 +271,15 @@ fn buildPrompt(alloc: std.mem.Allocator, config: Config, current: Node, neighbor
     }
     try out.appendSlice(alloc, "\nReturn JSON only with this shape: {\"done\":true|false,\"next_key\":string|null,\"answer\":string|null}. If done is false, next_key must be one of the listed neighbor keys.");
     return try out.toOwnedSlice(alloc);
+}
+
+fn nodeInstructionAlloc(alloc: std.mem.Allocator, node: Node, field: []const u8) !?[]const u8 {
+    var parsed = std.json.parseFromSlice(std.json.Value, alloc, node.document_json, .{}) catch return error.InvalidGraphAgentNodeInstruction;
+    defer parsed.deinit();
+    if (parsed.value != .object) return error.InvalidGraphAgentNodeInstruction;
+    const value = parsed.value.object.get(field) orelse return null;
+    if (value != .string) return error.InvalidGraphAgentNodeInstruction;
+    return try alloc.dupe(u8, value.string);
 }
 
 test "graph agent follows a model-selected neighbor" {

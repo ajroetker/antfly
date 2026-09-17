@@ -12159,7 +12159,7 @@ pub const ApiHttpServer = struct {
         else
             try graph_agent.startKeyFromOpenApi(request.graph_agent, alloc);
         defer alloc.free(start_key);
-        var result = try graph_agent.runWithChain(alloc, .{ .user_query = request.graph_agent.query, .instruction = request.graph_agent.instruction orelse "Choose the next graph node or finish the task.", .max_steps = @intCast(request.graph_agent.max_steps orelse graph_agent.default_max_steps), .neighbor_limit = @intCast(request.graph_agent.neighbor_limit orelse graph_agent.default_neighbor_limit) }, start_key, chains, .{ .ptr = &runner, .vtable = &.{ .load_node = AgentRunner.load, .list_neighbors = AgentRunner.neighbors, .generate = AgentRunner.generate } });
+        var result = try graph_agent.runWithChain(alloc, .{ .user_query = request.graph_agent.query, .instruction = request.graph_agent.instruction orelse "Choose the next graph node or finish the task.", .instruction_field = request.graph_agent.instruction_field, .max_steps = @intCast(request.graph_agent.max_steps orelse graph_agent.default_max_steps), .neighbor_limit = @intCast(request.graph_agent.neighbor_limit orelse graph_agent.default_neighbor_limit) }, start_key, chains, .{ .ptr = &runner, .vtable = &.{ .load_node = AgentRunner.load, .list_neighbors = AgentRunner.neighbors, .generate = AgentRunner.generate } });
         defer result.deinit(alloc);
         const agent_json = try result.jsonAlloc(alloc, request.graph_agent.include_trace orelse true);
         return .{ .json = agent_json };
