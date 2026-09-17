@@ -207,7 +207,7 @@ pub fn runWithChain(alloc: std.mem.Allocator, config: Config, start_key: []const
         defer parsed.deinit();
         const decision = parsed.value;
 
-        const selected_key = if (decision.next_key) |key| try alloc.dupe(u8, key) else null;
+        const selected_key = if (decision.next_key) |key| try alloc.dupe(u8, std.mem.trim(u8, key, " \t\r\n")) else null;
         try steps.append(alloc, .{
             .from_key = try alloc.dupe(u8, current_key),
             .selected_key = selected_key,
@@ -220,7 +220,7 @@ pub fn runWithChain(alloc: std.mem.Allocator, config: Config, start_key: []const
             break;
         }
 
-        const next_key = decision.next_key orelse return error.GraphAgentDecisionMissingNext;
+        const next_key = std.mem.trim(u8, decision.next_key orelse return error.GraphAgentDecisionMissingNext, " \t\r\n");
         var is_neighbor = false;
         for (neighbors) |neighbor| {
             if (std.mem.eql(u8, neighbor.key, next_key)) {
