@@ -12031,6 +12031,7 @@ pub const ApiHttpServer = struct {
         defer parsed_query.deinit(alloc);
         parsed_query.req.execution_deadline_ns = request_deadline_ns;
         parsed_query.req.cancellation = cancellation;
+        try self.maybeRouteQueryToReadSchema(table_name, &parsed_query.req);
         var response = (try source.query(alloc, table_name, parsed_query.req, .read_index)) orelse return error.NotFound;
         defer response.deinit(alloc);
         var decoded = try ant_json.parseFromSlice(metadata_openapi.QueryResponses, alloc, response.json, .{});
