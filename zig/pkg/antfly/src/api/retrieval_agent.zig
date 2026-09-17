@@ -2280,37 +2280,59 @@ fn executeNavigationRead(
         }
     }
     var neighbors = std.ArrayListUnmanaged(indexes_openapi.GraphResultNode).empty;
+    var neighbors_truncated = false;
     if (state.moves < (config.max_steps orelse 8)) {
         const selector = try arena.create(indexes_openapi.GraphKeyNodeSelector);
         selector.* = .{ .keys = try arena.dupe([]const u8, &.{current._id}) };
-        var neighbor_query = navigationReadScope(scope);
-        neighbor_query.graph_queries = try graphTraversalQueries(arena, "navigation", config.index, .{
-            .start = .{ .graph_key_node_selector = selector },
-            .direction = config.direction,
-            .edge_types = config.edge_types,
-            .max_depth = 1,
-            .limit = config.neighbor_limit orelse 8,
-            .include_documents = true,
-            .fields = scope.fields,
-        });
-        const neighbor_json = try encodeQueryValueForRetrievalQuery(alloc, runner, .{ .object = std.json.ObjectMap.empty }, neighbor_query, predicates, &.{}, null, 0, .initial);
-        defer alloc.free(neighbor_json);
-        const results = try runQueryWithResults(alloc, arena, runner, table, neighbor_json, request.query, false, false);
-        for (results.summaries) |summary| {
-            const graph_results = summary.graph_results orelse continue;
-            const graph = graph_results.map.get("navigation") orelse continue;
-            const nodes = switch (graph) {
-                .graph_nodes_result => |result| result.nodes,
-                else => return error.InvalidRetrievalAgentRequest,
-            };
-            for (nodes) |node| {
-                // Identity is scoped to the configured table. Never treat an
-                // equal key in a foreign table as a selectable local neighbor.
-                if (node.table) |owner| if (!std.mem.eql(u8, owner, table)) continue;
-                if (node.depth != 1 or node.document == null or state.visited.contains(node.key)) continue;
-                if (neighbors.items.len >= @as(usize, @intCast(config.neighbor_limit orelse 8))) break;
-                try neighbors.append(arena, node);
+        // The graph limit applies before navigation's eligibility checks.
+        // Retry a saturated prefix with bounded lookahead so previously visited,
+        // foreign-table and dangling nodes do not consume all candidate slots.
+        const candidate_limit: usize = @intCast(config.neighbor_limit orelse 8);
+        const max_lookahead: usize = 1024;
+        var fetch_limit = candidate_limit;
+        while (true) {
+            neighbors.clearRetainingCapacity();
+            var neighbor_query = navigationReadScope(scope);
+            neighbor_query.graph_queries = try graphTraversalQueries(arena, "navigation", config.index, .{
+                .start = .{ .graph_key_node_selector = selector },
+                .direction = config.direction,
+                .edge_types = config.edge_types,
+                .max_depth = 1,
+                .limit = @intCast(fetch_limit),
+                .include_documents = true,
+                .fields = scope.fields,
+            });
+            const neighbor_json = try encodeQueryValueForRetrievalQuery(alloc, runner, .{ .object = std.json.ObjectMap.empty }, neighbor_query, predicates, &.{}, null, 0, .initial);
+            defer alloc.free(neighbor_json);
+            const results = try runQueryWithResults(alloc, arena, runner, table, neighbor_json, request.query, false, false);
+            var saturated = false;
+            neighbors_truncated = false;
+            for (results.summaries) |summary| {
+                const graph_results = summary.graph_results orelse continue;
+                const graph = graph_results.map.get("navigation") orelse continue;
+                const result = switch (graph) {
+                    .graph_nodes_result => |result| result,
+                    else => return error.InvalidRetrievalAgentRequest,
+                };
+                saturated = saturated or result.stats.truncated or result.nodes.len >= fetch_limit;
+                neighbors_truncated = neighbors_truncated or result.stats.truncated;
+                for (result.nodes) |node| {
+                    // Identity is scoped to the configured table.
+                    if (node.table) |owner| if (!std.mem.eql(u8, owner, table)) continue;
+                    if (node.depth != 1 or node.document == null or state.visited.contains(node.key)) continue;
+                    if (neighbors.items.len >= candidate_limit) {
+                        neighbors_truncated = true;
+                        break;
+                    }
+                    try neighbors.append(arena, node);
+                }
             }
+            if (neighbors.items.len >= candidate_limit or !saturated) break;
+            if (fetch_limit == max_lookahead) {
+                neighbors_truncated = true;
+                break;
+            }
+            fetch_limit = @min(fetch_limit * 2, max_lookahead);
         }
     }
     const limit: usize = if (request.max_context_tokens) |tokens| @intCast(@min(@max(tokens - (request.reserve_tokens orelse 4000), 0), 16384) * 4) else 32768;
@@ -2323,7 +2345,7 @@ fn executeNavigationRead(
             .workflow_instruction = if (state.moves == 0) config.instruction else null,
             .node_instruction = node_instruction,
             .remaining_steps = @max(0, (config.max_steps orelse 8) - state.moves),
-            .truncated = neighbors.items.len < total,
+            .truncated = neighbors_truncated or neighbors.items.len < total,
         }, .{ .emit_null_optional_fields = false });
         if (payload.len <= remaining) {
             context_bytes.* += payload.len;
@@ -10871,4 +10893,98 @@ test "retrieval graph navigation waits for model observation between dependent m
     try std.testing.expectEqual(@as(?i64, 3), parsed.value.tool_calls_made);
     const rejected = findStepByName(parsed.value.steps.?, "navigate").?;
     try std.testing.expectEqual(metadata_openapi.AgentStepStatus.@"error", rejected.status);
+}
+
+test "retrieval graph navigation fills candidate slots and bounds lookahead" {
+    const Fake = struct {
+        exhausted: bool,
+        graph_reads: usize = 0,
+        largest_limit: i64 = 0,
+        fn run(ptr: *anyopaque, alloc: std.mem.Allocator, _: []const u8, body: []const u8) !query_api.QueryResponse {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            var parsed = try parseJsonBody(QueryRequest, alloc, body);
+            defer parsed.deinit();
+            if (parsed.value.graph_queries) |queries| {
+                const limit = queries.map.get("navigation").?.graph_traverse_query.traverse.limit.?;
+                self.graph_reads += 1;
+                self.largest_limit = @max(self.largest_limit, limit);
+                // B has visited A, a foreign node, a dangling node, and valid C.
+                const candidates = [_][]const u8{
+                    \\{"key":"a","depth":1,"document":{}}
+                    ,
+                    \\{"key":"foreign","table":"other","depth":1,"document":{}}
+                    ,
+                    \\{"key":"dangling","depth":1}
+                    ,
+                    \\{"key":"c","depth":1,"document":{}}
+                };
+                const count = if (self.exhausted) 1 else @min(@as(usize, @intCast(limit)), candidates.len);
+                const nodes = try std.mem.join(alloc, ",", candidates[0..count]);
+                defer alloc.free(nodes);
+                return .{ .json = try std.fmt.allocPrint(alloc,
+                    \\{{"responses":[{{"status":200,"took":1,"graph_results":{{"navigation":{{"kind":"nodes","nodes":[{s}],"stats":{{"returned_items":{d},"truncated":{}}}}}}}}}]}}
+                , .{ nodes, count, self.exhausted or count < candidates.len }) };
+            }
+            return .{ .json = try alloc.dupe(u8,
+                \\{"responses":[{"status":200,"took":1,"hits":{"hits":[{"_id":"b","_score":1,"_source":{}}]}}]}
+            ) };
+        }
+    };
+    const alloc = std.testing.allocator;
+    for ([_]bool{ false, true }) |exhausted| {
+        var arena_impl = std.heap.ArenaAllocator.init(alloc);
+        defer arena_impl.deinit();
+        const arena = arena_impl.allocator();
+        var parsed = try parseJsonBody(RetrievalAgentRequest, alloc,
+            \\{"query":"walk","queries":[{"table":"docs","graph_navigation":{"index":"links","direction":"both","neighbor_limit":1}}]}
+        );
+        defer parsed.deinit();
+        var state = GraphNavigationState{ .started = true, .current_key = "a", .moves = 1 };
+        try state.visited.put(arena, "a", {});
+        var context_bytes: usize = 0;
+        var hits = std.ArrayListUnmanaged(QueryHit).empty;
+        var seen = std.StringHashMapUnmanaged(void).empty;
+        var live = LiveEmitter{ .alloc = alloc };
+        var fake = Fake{ .exhausted = exhausted };
+        const payload = try executeNavigationRead(alloc, arena, .{ .ptr = &fake, .vtable = &.{ .run_query = Fake.run } }, parsed.value, parsed.value.queries[0], .{}, "b", &state, &context_bytes, &hits, &seen, &live);
+        const result = try std.json.parseFromSlice(std.json.Value, arena, payload, .{});
+        if (exhausted) {
+            try std.testing.expectEqual(@as(usize, 0), state.neighbors.len);
+            try std.testing.expectEqual(@as(i64, 1024), fake.largest_limit);
+            try std.testing.expectEqual(@as(usize, 11), fake.graph_reads);
+            try std.testing.expect(result.value.object.get("truncated").?.bool);
+        } else {
+            try std.testing.expectEqual(@as(usize, 1), state.neighbors.len);
+            try std.testing.expectEqualStrings("c", state.neighbors[0].key);
+            try std.testing.expectEqual(@as(usize, 3), fake.graph_reads);
+            try std.testing.expect(!result.value.object.get("truncated").?.bool);
+        }
+    }
+}
+
+test "retrieval graph navigation terminal answer preserves embedded JSON provider" {
+    const httpx = @import("httpx");
+    const Fake = struct {
+        fn generate(_: *anyopaque, alloc: std.mem.Allocator, _: []const u8, _: ?@import("../inference/execution_context.zig").RequestContext) ![]u8 {
+            return alloc.dupe(u8, "{\"choices\":[{\"message\":{\"content\":\"grounded answer\"}}]}");
+        }
+    };
+    const alloc = std.testing.allocator;
+    var client = httpx.Client.initWithConfig(alloc, std.testing.io, .{});
+    defer client.deinit();
+    var factory = @import("../generating/mod.zig").BackendFactory.initWithOptions(alloc, &client, .{
+        .antfly_provider = .{ .ptr = undefined, .embed_dense_texts = undefined, .embed_sparse_texts = undefined, .generate_json = Fake.generate },
+        .request_context = .{ .io = std.testing.io, .deadline_ns = null },
+    });
+    var arena_impl = std.heap.ArenaAllocator.init(alloc);
+    defer arena_impl.deinit();
+    const chain = try agent_tools.withTools(arena_impl.allocator(), &.{.{ .generator = generating.GeneratorConfig.fromAntfly(.{ .model = "test", .url = "" }) }}, "[]");
+    var generator = try factory.factory().create(alloc, chain[0].generator);
+    defer generator.deinit();
+    var result = try generator.generate(alloc, "test", &.{
+        .{ .role = .assistant, .tool_calls = &.{.{ .id = "c1", .name = "search", .arguments = "{}" }} },
+        .{ .role = .tool, .tool_call_id = "c1", .content = .{ .text = "evidence" } },
+    });
+    defer result.deinit();
+    try std.testing.expectEqualStrings("grounded answer", result.content);
 }

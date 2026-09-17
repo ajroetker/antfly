@@ -36,7 +36,10 @@ Omit `start_key` to start at the first search hit. Set it to an explicit documen
 key to start there instead. Explicit starts and every subsequent read enforce
 mandatory retrieval filters and authenticated row filters. Navigation stays in
 the configured table; foreign-table neighbors and missing documents are not offered.
-Direction and edge types apply to every hop. With a fields projection, include
+Direction and edge types apply to every hop. Neighbor reads use bounded lookahead
+(up to 1,024 candidates per node) to replace visited, foreign-table, or dangling
+candidates. Tool results retain a truncation flag when that bound or the graph
+query limit leaves candidates unexplored. With a fields projection, include
 the instruction field if you want the agent to read it.
 
 The agent calls `search` to start and `navigate` to select an offered, unvisited
