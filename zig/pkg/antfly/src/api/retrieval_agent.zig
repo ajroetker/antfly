@@ -713,14 +713,13 @@ fn executeInternal(
     try validateNavigationRequest(alloc, request, agentic_mode);
     if (retrievalNavigation(request)) |config| {
         const index: usize = @intCast(config.query_index);
-        if (!try navigationPolicyAllowsQuery(alloc, tool_policy, request, index, request.queries[index])) return error.UnsupportedRetrievalAgentRequest;
         if (config.selection == .ranked) normalized_queries[index].tree_search = .{
             .index = config.index,
-            .start_nodes = config.start_nodes,
-            .start_key = config.start_key,
+            .start = if (config.start_key) |key| .{ .key = key } else retrieval_plan.TreeStart.fromSelector(config.start_nodes),
             .max_depth = config.max_depth,
             .beam_width = config.beam_width,
         };
+        if (!try navigationPolicyAllowsQuery(alloc, tool_policy, request, index, request.queries[index])) return error.UnsupportedRetrievalAgentRequest;
     }
 
     const retrieval_queries = request.queries;
@@ -1117,10 +1116,7 @@ fn executeInternal(
                 const tree_plan = pending_tree_expansion_plan orelse break;
                 const tree_search = retrieval_query.tree_search orelse break;
                 var expanded_query = retrieval_query;
-                var expanded_tree = tree_search;
-                expanded_tree.start_nodes = tree_plan.seed_key;
-                expanded_tree.max_depth = tree_plan.max_depth;
-                expanded_query.tree_search = expanded_tree;
+                expanded_query.tree_search = tree_search.forBranch(tree_plan.seed_key, tree_plan.max_depth);
 
                 try appendStep(arena, &steps_list, &live, .{
                     .kind = .planning,
@@ -2182,8 +2178,11 @@ fn agenticNavigation(request: RetrievalAgentRequest, index: usize) ?RetrievalNav
 fn navigationPolicyAllowsQuery(alloc: std.mem.Allocator, policy: ToolPolicy, request: RetrievalAgentRequest, index: usize, query: RetrievalQueryRequest) !bool {
     const config = retrievalNavigationForQuery(request, index) orelse return toolPolicyAllowsRetrievalQuery(alloc, policy, query);
     if (!policy.isEnabled(if (config.strategy == .tree) .tree_search else .graph_search)) return false;
-    // An explicit navigation start does not require a table-scan tool.
-    if (!hasExecutablePlan(query) and !hasMetadataRetrievalFields(query)) return true;
+    // Only an explicit node read can skip the table-scan fallback. Implicit
+    // agentic seeds execute the ordinary query and need its normal permissions.
+    // Ranked tree plans are normalized before this check, so their tree tool
+    // requirement is handled by the same policy path as other executable plans.
+    if (config.selection == .agentic and config.start_key != null and !hasExecutablePlan(query) and !hasMetadataRetrievalFields(query)) return true;
     return toolPolicyAllowsRetrievalQuery(alloc, policy, query);
 }
 
@@ -2855,7 +2854,8 @@ fn buildToolStepDetails(
     if (retrieval_query.tree_search) |tree_search| {
         var tree_obj = std.json.ObjectMap.empty;
         try tree_obj.put(alloc, "index", .{ .string = tree_search.index });
-        if (tree_search.start_nodes) |start_nodes| try tree_obj.put(alloc, "start_nodes", .{ .string = start_nodes });
+        if (tree_search.start.literalKey()) |key| try tree_obj.put(alloc, "start_key", .{ .string = key });
+        if (tree_search.start.selectorText()) |start_nodes| try tree_obj.put(alloc, "start_nodes", .{ .string = start_nodes });
         if (tree_search.max_depth) |max_depth| try tree_obj.put(alloc, "max_depth", .{ .integer = max_depth });
         if (tree_search.beam_width) |beam_width| try tree_obj.put(alloc, "beam_width", .{ .integer = beam_width });
         try obj.put(alloc, "tree_search", .{ .object = tree_obj });
@@ -5842,7 +5842,7 @@ fn topRemainingProbeCandidateIndices(
 fn isProbeableRetrievalQuery(retrieval_query: RetrievalQueryRequest) bool {
     if (retrieval_query.table == null) return false;
     if (retrieval_query.tree_search) |tree_search| {
-        if (tree_search.start_nodes) |start_nodes| {
+        if (tree_search.start.selectorText()) |start_nodes| {
             const trimmed = std.mem.trim(u8, start_nodes, " \t\r\n");
             if (trimmed.len == 0) return false;
             if (std.mem.eql(u8, trimmed, "$roots")) return true;
@@ -5909,7 +5909,7 @@ fn queryTextForProbe(
         if (extractRawQueryStringAlloc(alloc, filter_query)) |query| return query;
     }
     if (retrieval_query.tree_search) |tree_search| {
-        if (tree_search.start_nodes) |start_nodes| return start_nodes;
+        if (tree_search.start.selectorText()) |start_nodes| return start_nodes;
     }
     return "";
 }
@@ -6797,8 +6797,8 @@ fn buildTreeStartNodes(
     tree_search: TreeSearchConfig,
     previous_query_hits: []const QueryHit,
 ) !indexes_openapi.GraphNodeSelector {
-    if (tree_search.start_key) |key| return try makeTreeKeyNodeSelector(alloc, try alloc.dupe([]const u8, &.{key}));
-    if (tree_search.start_nodes) |start_nodes| {
+    if (tree_search.start.literalKey()) |key| return try makeTreeKeyNodeSelector(alloc, try alloc.dupe([]const u8, &.{key}));
+    if (tree_search.start.selectorText()) |start_nodes| {
         const trimmed = std.mem.trim(u8, start_nodes, " \t\r\n");
         if (trimmed.len == 0) return error.InvalidRetrievalAgentRequest;
         if (std.mem.eql(u8, trimmed, "$roots")) {
@@ -6845,7 +6845,7 @@ fn makeTreeResultRefNodeSelector(
 
 fn retrievalQueryDiscoversTreeRoots(retrieval_query: RetrievalQueryRequest) bool {
     const tree_search = retrieval_query.tree_search orelse return false;
-    const start_nodes = tree_search.start_nodes orelse return false;
+    const start_nodes = tree_search.start.selectorText() orelse return false;
     return std.mem.eql(u8, std.mem.trim(u8, start_nodes, " \t\r\n"), "$roots");
 }
 
@@ -8269,7 +8269,7 @@ test "tree branch expansion plan picks strongest visible branch seed" {
 
     const plan = (try selectTreeBranchExpansionPlan(alloc, "payments roadmap", .{
         .index = "doc_hierarchy",
-        .start_nodes = "$roots",
+        .start = .{ .selector = "$roots" },
         .max_depth = 3,
         .beam_width = 3,
     }, &hits)).?;
@@ -11343,4 +11343,127 @@ test "retrieval tree navigation retains siblings when a selected node disappears
     try std.testing.expect(state.canMove(config, "b"));
     try std.testing.expect(!state.canMove(config, "a"));
     try std.testing.expectEqual(@as(usize, 0), hits.items.len);
+}
+
+test "retrieval navigation enforces implicit seed permissions before generation" {
+    const Fake = struct {
+        reads: usize = 0,
+        turns: usize = 0,
+        explicit: bool,
+        fn run(ptr: *anyopaque, alloc: std.mem.Allocator, _: []const u8, body: []const u8) !query_api.QueryResponse {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.reads += 1;
+            const query = try std.json.parseFromSlice(QueryRequest, alloc, body, .{});
+            defer query.deinit();
+            if (self.explicit) {
+                try std.testing.expectEqualStrings("$literal, key", query.value.query.?.object.get("doc_id").?.array.items[0].string);
+            } else {
+                try std.testing.expect(query.value.query == null);
+                try std.testing.expect(query.value.graph_queries == null);
+            }
+            return .{ .json = try alloc.dupe(u8, "{\"responses\":[{\"status\":200,\"took\":1,\"hits\":{\"hits\":[]}}]}") };
+        }
+        fn generate(ptr: *anyopaque, alloc: std.mem.Allocator, _: []const generating.ChainLink, _: []const generating.ChatMessage) !generating.GenerateResult {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.turns += 1;
+            const calls = try alloc.alloc(generating.ToolCall, 1);
+            calls[0] = .{ .id = try alloc.dupe(u8, "seed"), .name = try alloc.dupe(u8, "search"), .arguments = try alloc.dupe(u8, "{\"query_index\":0}") };
+            return .{ .allocator = alloc, .content = try alloc.dupe(u8, ""), .tool_calls = calls };
+        }
+    };
+    const alloc = std.testing.allocator;
+    for ([_][]const u8{ "graph", "tree" }) |strategy| {
+        const tool = if (std.mem.eql(u8, strategy, "graph")) "graph_search" else "tree_search";
+        const all_tools = [_][]const u8{ tool, "add_filter" };
+        for ([_]bool{ false, true }) |explicit| {
+            for ([_]bool{ false, true }) |allow_scan| {
+                for ([_]bool{ false, true }) |narrow_step| {
+                    const body = try std.json.Stringify.valueAlloc(alloc, .{
+                        .query = "walk",
+                        .stream = false,
+                        .generator = .{ .provider = "antfly", .model = "test" },
+                        .max_internal_iterations = 1,
+                        .tools = .{ .enabled_tools = all_tools[0..if (allow_scan) @as(usize, 2) else 1] },
+                        .queries = &.{.{ .table = "docs" }},
+                        .steps = .{ .retrieval = .{
+                            .navigation = .{ .query_index = 0, .strategy = strategy, .selection = "agentic", .index = "links", .start_key = if (explicit) @as(?[]const u8, "$literal, key") else null },
+                            .tools = if (narrow_step) @as(?struct { enabled_tools: []const []const u8 }, .{ .enabled_tools = all_tools[0..1] }) else null,
+                        } },
+                    }, .{ .emit_null_optional_fields = false });
+                    defer alloc.free(body);
+                    var fake = Fake{ .explicit = explicit };
+                    const runner = QueryRunner{ .ptr = &fake, .vtable = &.{ .run_query = Fake.run } };
+                    const generator = GenerationRunner{ .ptr = &fake, .vtable = &.{ .execute_chain = Fake.generate } };
+                    if (!explicit and (!allow_scan or narrow_step)) {
+                        try std.testing.expectError(error.UnsupportedRetrievalAgentRequest, executeJson(alloc, runner, generator, body));
+                        try std.testing.expectEqual(@as(usize, 0), fake.reads);
+                        try std.testing.expectEqual(@as(usize, 0), fake.turns);
+                    } else {
+                        const result = try executeJson(alloc, runner, generator, body);
+                        defer alloc.free(result);
+                        try std.testing.expectEqual(@as(usize, 1), fake.reads);
+                        try std.testing.expectEqual(@as(usize, 1), fake.turns);
+                    }
+                }
+            }
+        }
+    }
+}
+
+test "retrieval navigation ranked starts require only the tree tool" {
+    const Fake = struct {
+        reads: usize = 0,
+        fn run(ptr: *anyopaque, alloc: std.mem.Allocator, _: []const u8, body: []const u8) !query_api.QueryResponse {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.reads += 1;
+            const query = try std.json.parseFromSlice(QueryRequest, alloc, body, .{});
+            defer query.deinit();
+            try std.testing.expect(query.value.graph_queries.?.map.get("tree_search") != null);
+            return .{ .json = try alloc.dupe(u8, "{\"responses\":[{\"status\":200,\"took\":1,\"hits\":{\"hits\":[]}}]}") };
+        }
+    };
+    const alloc = std.testing.allocator;
+    for ([_][]const u8{ "start_key", "start_nodes" }) |field| {
+        const body = try std.fmt.allocPrint(alloc,
+            \\{{"query":"walk","stream":false,"tools":{{"enabled_tools":["tree_search"]}},"queries":[{{"table":"docs"}}],"steps":{{"retrieval":{{"navigation":{{"query_index":0,"strategy":"tree","selection":"ranked","index":"links","{s}":"root"}}}}}}}}
+        , .{field});
+        defer alloc.free(body);
+        var fake = Fake{};
+        const result = try executeJson(alloc, .{ .ptr = &fake, .vtable = &.{ .run_query = Fake.run } }, null, body);
+        defer alloc.free(result);
+        try std.testing.expectEqual(@as(usize, 1), fake.reads);
+    }
+}
+
+test "retrieval navigation ranked branch expansion replaces every start kind with a literal key" {
+    const alloc = std.testing.allocator;
+    var arena_impl = std.heap.ArenaAllocator.init(alloc);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+    const runner = QueryRunner{ .ptr = undefined, .vtable = &.{ .run_query = NavigationTestRunner.query } };
+    const starts = [_]retrieval_plan.TreeStart{ .seed_results, .{ .key = "original-root" }, .{ .selector = "$roots" }, .{ .selector = "root-a,root-b" } };
+    for (starts) |start| {
+        const original = TreeSearchConfig{ .index = "sections", .start = start, .max_depth = 5, .beam_width = 3 };
+        // Exercise the same allocation-free transition used by expand_branch.
+        const branch = original.forBranch("$selected, child", 2);
+        const query = RetrievalQueryRequest{ .table = "docs", .tree_search = branch };
+        try std.testing.expect(!retrievalQueryDiscoversTreeRoots(query));
+        try std.testing.expectEqual(@as(?i64, 3), branch.beam_width);
+        const encoded = try encodeQueryValueForRetrievalQuery(alloc, runner, .{ .object = std.json.ObjectMap.empty }, query, .{}, &.{}, null, 0, .followup);
+        defer alloc.free(encoded);
+        var admitted = try query_api.parsePublicQueryRequest(alloc, null, "docs", encoded);
+        defer admitted.deinit(alloc);
+        const parsed = try std.json.parseFromSlice(QueryRequest, alloc, encoded, .{});
+        defer parsed.deinit();
+        const operation = parsed.value.graph_queries.?.map.get("tree_search").?.graph_traverse_query;
+        try std.testing.expectEqualStrings("sections", operation.index);
+        try std.testing.expectEqual(@as(?i64, 2), operation.traverse.max_depth);
+        const keys = operation.traverse.start.graph_key_node_selector.keys;
+        try std.testing.expectEqual(@as(usize, 1), keys.len);
+        try std.testing.expectEqualStrings("$selected, child", keys[0]);
+        const details = try buildToolStepDetails(arena, query, 0, .tree);
+        const tree = details.map.get("tree_search").?.object;
+        try std.testing.expectEqualStrings("$selected, child", tree.get("start_key").?.string);
+        try std.testing.expect(tree.get("start_nodes") == null);
+    }
 }

@@ -2266,7 +2266,8 @@ pub fn buildQueryBuilderResponseWithContext(
             .strategy = .tree,
             .selection = .ranked,
             .index = tree.index,
-            .start_nodes = tree.start_nodes,
+            .start_nodes = tree.start.selectorText(),
+            .start_key = tree.start.literalKey(),
             .max_depth = tree.max_depth,
             .beam_width = tree.beam_width,
         } else null,
@@ -4667,7 +4668,7 @@ fn queryBuilderConstraintTreeSearch(
     if (trimmed_index.len == 0) return null;
     return .{
         .index = try alloc.dupe(u8, trimmed_index),
-        .start_nodes = try queryBuilderTreeStartNodes(alloc, request, constraints),
+        .start = @import("retrieval_plan.zig").TreeStart.fromSelector(try queryBuilderTreeStartNodes(alloc, request, constraints)),
         .max_depth = queryBuilderConstraintInteger(constraints, "tree_max_depth") orelse
             queryBuilderConstraintInteger(constraints, "max_depth"),
         .beam_width = queryBuilderConstraintInteger(constraints, "tree_beam_width") orelse
@@ -4703,7 +4704,7 @@ fn queryBuilderTreeSearchFromValue(
             if (trimmed.len == 0) return null;
             return .{
                 .index = try alloc.dupe(u8, trimmed),
-                .start_nodes = try queryBuilderObjectOptionalStringDup(alloc, object, "start_nodes"),
+                .start = @import("retrieval_plan.zig").TreeStart.fromSelector(try queryBuilderObjectOptionalStringDup(alloc, object, "start_nodes")),
                 .max_depth = queryBuilderObjectInteger(object, "max_depth") orelse
                     queryBuilderConstraintInteger(constraints, "tree_max_depth"),
                 .beam_width = queryBuilderObjectInteger(object, "beam_width") orelse

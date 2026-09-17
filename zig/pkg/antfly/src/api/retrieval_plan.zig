@@ -16,12 +16,44 @@
 const std = @import("std");
 const api = @import("antfly_metadata_openapi");
 
+// Exactly one start source can be active. Keys are literal IDs; selectors
+// retain ranked traversal's root/CSV/prior-result semantics.
+pub const TreeStart = union(enum) {
+    seed_results,
+    key: []const u8,
+    selector: []const u8,
+
+    pub fn fromSelector(value: ?[]const u8) TreeStart {
+        return if (value) |text| .{ .selector = text } else .seed_results;
+    }
+
+    pub fn literalKey(self: TreeStart) ?[]const u8 {
+        return switch (self) {
+            .key => |key| key,
+            else => null,
+        };
+    }
+
+    pub fn selectorText(self: TreeStart) ?[]const u8 {
+        return switch (self) {
+            .selector => |text| text,
+            else => null,
+        };
+    }
+};
+
 pub const TreeSearchConfig = struct {
     index: []const u8,
-    start_key: ?[]const u8 = null,
-    start_nodes: ?[]const u8 = null,
+    start: TreeStart = .seed_results,
     max_depth: ?i64 = null,
     beam_width: ?i64 = null,
+
+    pub fn forBranch(self: TreeSearchConfig, key: []const u8, max_depth: i64) TreeSearchConfig {
+        var branch = self;
+        branch.start = .{ .key = key };
+        branch.max_depth = max_depth;
+        return branch;
+    }
 };
 
 pub const Query = blk: {

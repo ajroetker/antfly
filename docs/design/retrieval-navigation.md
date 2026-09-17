@@ -99,6 +99,12 @@ additional authorization check. Without an explicit selector, ranked traversal
 uses seed-query results or prior query hits, preserving deterministic traversal
 semantics. Caller workflow instructions are rejected for ranked selection.
 
+Internally, a ranked tree start is a tagged choice of seed results, a literal
+key, or a selector. Branch expansion replaces that choice with the selected
+literal key, retaining the index and beam width and setting the expansion depth.
+This transition borrows the existing key and allocates nothing; an old root or
+selector cannot remain active alongside the branch key.
+
 ## Agentic execution
 
 `search(query_index)` starts navigation once. `navigate(query_index, next_key)`
@@ -123,7 +129,11 @@ cannot change authorized tables, filters, tools, or budgets.
 
 Graph navigation requires `graph_search` permission; tree navigation requires
 `tree_search` permission. Seed search/filter permissions still apply. The
-retrieval-step tools policy can only narrow the top-level policy. The model
+retrieval-step tools policy can only narrow the top-level policy. An implicit
+agentic seed with only a table scope performs a scan and requires `add_filter`;
+an explicit `start_key` on a bare table needs only the navigation tool. Ranked
+plans are normalized before permission checks so explicit keys, root discovery,
+and prior-result starts retain their tree-tool requirements. The model
 cannot use `build_query` to replace a navigation target's fixed scope.
 
 ## Budgets and results
